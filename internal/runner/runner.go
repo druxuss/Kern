@@ -24,7 +24,8 @@ func DetectHypervisor() HypervisorType {
 		return HypervisorHVF
 	}
 	// Linux con KVM
-	if _, err := os.Stat("/dev/kvm"); err == nil {
+	if device, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err == nil {
+		device.Close()
 		return HypervisorKVM
 	}
 	return HypervisorQEMU

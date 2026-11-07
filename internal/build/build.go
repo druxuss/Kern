@@ -61,6 +61,10 @@ func Build(config *kernfile.KernfileConfig, projectPath string) error {
 
 	ukiPath := filepath.Join(projectPath, ".unikernel", "image.uki")
 	prevPath := filepath.Join(projectPath, ".unikernel", "image.uki.prev")
+	unikernelDir := filepath.Dir(ukiPath)
+	if err := os.MkdirAll(unikernelDir, 0755); err != nil {
+		return fmt.Errorf("error creating image directory: %w", err)
+	}
 	if _, err := os.Stat(ukiPath); err == nil {
 		if data, err := os.ReadFile(ukiPath); err == nil {
 			os.WriteFile(prevPath, data, 0755)
@@ -83,11 +87,6 @@ func Build(config *kernfile.KernfileConfig, projectPath string) error {
 	_, privKey, err := packager.GenerateKeyPair(configDir)
 	if err != nil {
 		return fmt.Errorf("error generating key pair: %w", err)
-	}
-
-	unikernelDir := filepath.Join(projectPath, ".unikernel")
-	if err := os.MkdirAll(unikernelDir, 0755); err != nil {
-		return fmt.Errorf("error creating .unikernel directory: %w", err)
 	}
 
 	imagePath := filepath.Join(unikernelDir, "image.uki")
