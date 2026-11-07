@@ -18,7 +18,7 @@ jobs:
       - name: Instalar Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.27.3'
           cache: false
 
       - name: Verificar formato
@@ -35,3 +35,26 @@ jobs:
 
       - name: Tests
         run: go test ./... -v -timeout 60s
+
+      - name: Validate Linux installer syntax
+        run: bash -n install.sh setup-wsl.sh
+
+  windows-installer:
+    name: Windows WSL installer syntax
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell installer
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "windows-install-requirements.ps1"),
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }

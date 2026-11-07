@@ -1,141 +1,167 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# kern installer for Linux
-# https://github.com/Kern-Unikernel/Kern-Unikernel
+# One-command installer for a clean Ubuntu/Debian x86_64 host.
+# Run as the target user, not with sudo; sudo is used only for system packages
+# and files under /usr/local.
 
-GO_VERSION="1.26.3"
-KERN_REPO="https://github.com/Kern-Unikernel/Kern-Unikernel.git"
-KERN_BIN="$HOME/go/bin/kern"
-PROFILES_DIR="/usr/local/bin/profiles"
+readonly GO_VERSION="1.27.3"
+readonly GO_SHA256="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
+readonly REPOSITORY="https://github.com/Kern-Unikernel/Kern-Unikernel.git"
+readonly REPOSITORY_REF="${KERN_BRANCH:-fix/improve}"
+readonly INSTALL_DIR="/usr/local/bin"
 
-GREEN='\033[0;32m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-info()    { echo -e "${DIM}   ${1}${RESET}"; }
-success() { echo -e "${GREEN}✓${RESET}  ${1}"; }
-header()  { echo -e "\n${BOLD}${1}${RESET}"; }
-
-echo ""
-echo -e "${GREEN}kern installer${RESET}"
-echo -e "${DIM}https://github.com/Kern-Unikernel/Kern-Unikernel${RESET}"
-echo ""
-
-# ── Detect OS ──────────────────────────────────────────────────────────────
-if [[ "$(uname -s)" != "Linux" ]]; then
-    echo "Error: kern currently only supports Linux."
+fail() {
+    printf 'kern installer: ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+if [[ "${EUID}" -eq 0 ]]; then
+    fail "run this command as your normal user; the installer will call sudo when needed"
+fi
+if ! command -v sudo >/dev/null 2>&1; then
+    fail "sudo is required to install system packages"
+fi
+if ! command -v apt-get >/dev/null 2>&1 || [[ ! -r /etc/os-release ]]; then
+    fail "supported hosts are Ubuntu/Debian x86_64"
+fi
+# shellcheck disable=SC1091
+source /etc/os-release
+if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "debian" ]]; then
+    fail "supported hosts are Ubuntu/Debian; detected ${PRETTY_NAME:-unknown}"
+fi
+if [[ "$(uname -m)" != "x86_64" ]]; then
+    fail "the current build and QEMU pipeline targets x86_64; detected $(uname -m)"
 fi
 
-ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
-if [[ "$ARCH" == "x86_64" ]]; then ARCH="amd64"; fi
-
-# ── 1. System packages ─────────────────────────────────────────────────────
-header "[1/5] Installing system dependencies..."
-
-sudo apt-get update -qq
-sudo apt-get install -y -qq \
-    curl git build-essential \
-    qemu-system-x86 qemu-kvm \
-    skopeo buildah \
-    binutils \
-    iproute2 bridge-utils uml-utilities \
-    2>/dev/null
-
-success "System packages installed"
-
-# ── 2. KVM check ───────────────────────────────────────────────────────────
-header "[2/5] Checking KVM support..."
-
-if kvm-ok &>/dev/null 2>&1; then
-    success "KVM available — hardware acceleration enabled"
-elif [ -e /dev/kvm ]; then
-    success "KVM available"
-else
-    echo -e "  ${DIM}Warning: KVM not available — kern will run without hardware acceleration${RESET}"
+sudo -v
+printf '\n==> Installing host dependencies\n'
+sudo apt-get update
+sudo apt-get install -y software-properties-common
+if [[ "${ID}" == "ubuntu" ]]; then
+    sudo add-apt-repository -y universe
 fi
+sudo apt-get update
+sudo apt-get install -y \
+    ca-certificates curl git build-essential binutils cpio tar findutils \
+    qemu-system-x86 cpu-checker skopeo buildah uidmap fuse-overlayfs crun slirp4netns \
+    iproute2 bridge-utils uml-utilities dnsmasq-base
 
-# ── 3. Go ──────────────────────────────────────────────────────────────────
-header "[3/5] Installing Go ${GO_VERSION}..."
-
-INSTALL_GO=0
-if command -v go &>/dev/null; then
-    CURRENT_GO=$(go version | awk '{print $3}' | sed 's/go//')
-    info "Go already installed: ${CURRENT_GO}"
-    if [[ "$(printf '%s\n' "$GO_VERSION" "$CURRENT_GO" | sort -V | head -n1)" != "$GO_VERSION" ]]; then
-        INSTALL_GO=1
+printf '\n==> Preparing rootless Buildah\n'
+ensure_subid_range() {
+    local file="$1" option="$2" uid
+    uid="$(id -u "$USER")"
+    if [[ ! -e "$file" ]]; then
+        sudo install -m 0644 /dev/null "$file"
     fi
-else
-    INSTALL_GO=1
-fi
-
-if [[ "$INSTALL_GO" == "1" ]]; then
-    info "Downloading Go ${GO_VERSION}..."
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
-        | sudo tar -xz -C /usr/local
-
-    # Add to PATH
-    if ! grep -q '/usr/local/go/bin' ~/.bashrc; then
-        echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bashrc
-        echo 'export GOPATH=$HOME/go' >> ~/.bashrc
+    if awk -F: -v user="$USER" -v uid="$uid" '$1 == user || $1 == uid { found = 1 } END { exit !found }' "$file"; then
+        return
     fi
+    local first last
+    first="$(awk -F: 'BEGIN { max = 99999 } $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ { end = $2 + $3 - 1; if (end > max) max = end } END { print (int(max / 65536) + 1) * 65536 }' "$file")"
+    last=$((first + 65535))
+    (( last <= 4294967294 )) || fail "no free subordinate ID range remains in $file"
+    sudo usermod "$option" "${first}-${last}" "$USER"
+}
+ensure_subid_range /etc/subuid --add-subuids
+ensure_subid_range /etc/subgid --add-subgids
+if [[ -c /dev/kvm ]] && getent group kvm >/dev/null && ! id -nG "$USER" | tr ' ' '\n' | grep -qx kvm; then
+    sudo usermod -aG kvm "$USER"
+    printf 'Added %s to group kvm; a new login session is needed for KVM acceleration.\n' "$USER"
+fi
+mkdir -p "$HOME/.config/containers"
+storage_config="$HOME/.config/containers/storage.conf"
+created_storage_config=0
+if [[ ! -e "$storage_config" ]]; then
+    cat >"$storage_config" <<'EOF'
+[storage]
+driver = "overlay"
 
-    if ! grep -q '/usr/local/go/bin' ~/.profile; then
-        echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.profile
+[storage.options]
+mount_program = "/usr/bin/fuse-overlayfs"
+EOF
+    created_storage_config=1
+fi
+
+printf '\n==> Checking Go toolchain\n'
+tmp_dir=""
+work_dir=""
+smoke_dir=""
+cleanup() {
+    [[ -z "$tmp_dir" ]] || rm -rf "$tmp_dir"
+    [[ -z "$work_dir" ]] || rm -rf "$work_dir"
+    [[ -z "$smoke_dir" ]] || rm -rf "$smoke_dir"
+}
+trap cleanup EXIT
+current_go=""
+if [[ -x /usr/local/go/bin/go ]]; then
+    current_go="$(/usr/local/go/bin/go version | awk '{print $3}' | sed 's/^go//')"
+fi
+if [[ -z "$current_go" || "$(printf '%s\n' "$GO_VERSION" "$current_go" | sort -V | head -n1)" != "$GO_VERSION" ]]; then
+    tmp_dir="$(mktemp -d)"
+    archive="go${GO_VERSION}.linux-amd64.tar.gz"
+    curl --fail --location --silent --show-error "https://go.dev/dl/${archive}" -o "${tmp_dir}/${archive}"
+    printf '%s  %s\n' "$GO_SHA256" "${tmp_dir}/${archive}" | sha256sum --check --status \
+        || fail "Go archive checksum verification failed"
+
+    # Go's official installer requires replacing, not overlaying, an old tree.
+    if [[ -d /usr/local/go ]]; then
+        backup="/usr/local/go.kern-backup.$(date +%Y%m%d%H%M%S)"
+        sudo mv /usr/local/go "$backup"
+        printf 'Previous Go installation moved to %s\n' "$backup"
     fi
-
-    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
-    export GOPATH=$HOME/go
+    sudo tar -C /usr/local -xzf "${tmp_dir}/${archive}"
 fi
 
-success "Go $(go version | awk '{print $3}')"
+# /usr/local/bin is already on Ubuntu's default PATH, including the shell that
+# launched this installer, so kern build can invoke Go immediately.
+sudo ln -sfn /usr/local/go/bin/go /usr/local/bin/go
+sudo ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+export PATH="/usr/local/go/bin:${PATH}"
+printf 'Using %s\n' "$(go version)"
 
-# ── 4. Build kern ──────────────────────────────────────────────────────────
-header "[4/5] Building kern..."
+printf '\n==> Building and installing kern (%s)\n' "$REPOSITORY_REF"
+work_dir="$(mktemp -d)"
+git clone --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY" "$work_dir/source"
+(
+    cd "$work_dir/source"
+    go build -trimpath -o "$work_dir/kern" ./cmd/
+)
+sudo install -m 0755 "$work_dir/kern" "$INSTALL_DIR/kern"
+sudo install -d -m 0755 "$INSTALL_DIR/profiles"
+sudo install -m 0644 "$work_dir/source"/profiles/*.toml "$INSTALL_DIR/profiles/"
 
-KERN_SRC="$HOME/.kern-src"
-
-if [ -d "$KERN_SRC" ]; then
-    info "Updating existing source..."
-    cd "$KERN_SRC" && git pull -q origin main
+printf '\n==> Verifying installed tools\n'
+for tool in go qemu-system-x86_64 skopeo buildah cpio objcopy; do
+    command -v "$tool" >/dev/null 2>&1 || fail "required command not found after install: $tool"
+done
+smoke_dir="$(mktemp -d)"
+smoke_image="kern-installer-smoke-$$"
+printf 'smoke test\n' >"$smoke_dir/marker"
+printf 'FROM scratch\nCOPY marker /marker\n' >"$smoke_dir/Containerfile"
+if ! buildah info >/dev/null || ! buildah build --pull=false -t "$smoke_image" -f "$smoke_dir/Containerfile" "$smoke_dir"; then
+    if [[ "$created_storage_config" -ne 1 ]]; then
+        fail "Buildah cannot initialize or build a local image; existing storage configuration was preserved"
+    fi
+    printf 'Buildah overlay failed; retrying with the portable VFS storage driver.\n'
+    cat >"$storage_config" <<'EOF'
+[storage]
+driver = "vfs"
+EOF
+    buildah info >/dev/null || fail "rootless Buildah cannot initialize even with VFS storage"
+    buildah build --pull=false -t "$smoke_image" -f "$smoke_dir/Containerfile" "$smoke_dir" \
+        || fail "Buildah cannot build a local image as this user"
+fi
+buildah rmi "$smoke_image" >/dev/null
+rm -rf "$smoke_dir"
+smoke_dir=""
+printf 'QEMU: %s\n' "$(qemu-system-x86_64 --version | head -n1)"
+printf 'KVM: '
+if kvm-ok >/dev/null 2>&1; then
+    printf 'available (hardware acceleration)\n'
 else
-    info "Cloning repository..."
-    git clone -q "$KERN_REPO" "$KERN_SRC"
+    printf 'not available; kern will use QEMU TCG emulation\n'
 fi
+kern --help >/dev/null || fail "kern failed its startup check"
 
-cd "$KERN_SRC"
-mkdir -p "$HOME/go/bin"
-go build -o "$KERN_BIN" ./cmd/
-success "kern built: $KERN_BIN"
-
-# ── 5. Install profiles ────────────────────────────────────────────────────
-header "[5/5] Installing runtime profiles..."
-
-sudo mkdir -p "$PROFILES_DIR"
-sudo cp profiles/*.toml "$PROFILES_DIR/"
-success "Profiles installed: $PROFILES_DIR"
-
-# ── PATH reminder ──────────────────────────────────────────────────────────
-if ! echo "$PATH" | grep -q "$HOME/go/bin"; then
-    echo ""
-    echo -e "${DIM}  Add kern to your PATH by running:${RESET}"
-    echo -e "  ${GREEN}export PATH=\$PATH:\$HOME/go/bin${RESET}"
-    echo -e "${DIM}  Or restart your terminal.${RESET}"
-fi
-
-# ── Done ───────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${BOLD}  kern installed successfully${RESET}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo ""
-echo -e "  Get started:"
-echo -e "  ${GREEN}kern init${RESET}     — detect runtime and create Kernfile"
-echo -e "  ${GREEN}kern build${RESET}    — build your unikernel"
-echo -e "  ${GREEN}kern run -d${RESET}   — run in background"
-echo -e "  ${GREEN}kern ps${RESET}       — list running unikernels"
-echo ""
-echo -e "  Docs: ${DIM}https://github.com/Kern-Unikernel/Kern-Unikernel${RESET}"
-echo ""
+printf '\nInstallation complete. Run kern build and kern run from an app directory.\n'
