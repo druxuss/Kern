@@ -101,9 +101,9 @@ if [[ -z "$current_go" || "$(printf '%s\n' "$GO_VERSION" "$current_go" | sort -V
     tmp_dir="$(mktemp -d)"
     archive="go${GO_VERSION}.linux-amd64.tar.gz"
     if ! curl --fail --location --show-error --retry 2 --retry-all-errors \
-        --connect-timeout 20 --max-time 300 --progress-bar \
+        --connect-timeout 20 --max-time 100 --progress-bar \
         "https://go.dev/dl/${archive}" -o "${tmp_dir}/${archive}"; then
-        fail "could not download Go ${GO_VERSION} from go.dev within 5 minutes; check outbound HTTPS/DNS and rerun the installer"
+        fail "could not download Go ${GO_VERSION} from go.dev after retries (about 5 minutes); check outbound HTTPS/DNS and rerun the installer"
     fi
     printf '%s  %s\n' "$GO_SHA256" "${tmp_dir}/${archive}" | sha256sum --check --status \
         || fail "Go archive checksum verification failed"
