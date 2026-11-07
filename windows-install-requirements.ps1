@@ -59,7 +59,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $installer = Join-Path $env:TEMP "kern-install-$PID.sh"
 try {
-    $url = "https://raw.githubusercontent.com/Kern-Unikernel/Kern-Unikernel/$repoRef/install.sh"
+    $url = "https://raw.githubusercontent.com/druxuss/Kern/$repoRef/install.sh"
     Write-Host "Downloading kern installer for WSL distribution '$Distro' ($repoRef)..." -ForegroundColor Cyan
     Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $installer
     $bashPath = Convert-WindowsPathToBashLiteral $installer $Distro

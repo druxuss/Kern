@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly GO_VERSION="1.27.3"
 readonly GO_SHA256="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
-readonly REPOSITORY="https://github.com/Kern-Unikernel/Kern-Unikernel.git"
+readonly REPOSITORY="https://github.com/druxuss/Kern.git"
 readonly REPOSITORY_REF="${KERN_BRANCH:-fix/improve}"
 readonly INSTALL_DIR="/usr/local/bin"
 

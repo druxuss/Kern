@@ -10,4 +10,4 @@ fi
 
 printf 'Installing kern into this WSL distribution from branch %s\n' "$KERN_BRANCH"
 exec bash <(curl --fail --location --silent --show-error \
-    "https://raw.githubusercontent.com/Kern-Unikernel/Kern-Unikernel/${KERN_BRANCH}/install.sh")
+    "https://raw.githubusercontent.com/druxuss/Kern/${KERN_BRANCH}/install.sh")
