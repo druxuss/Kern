@@ -6,6 +6,7 @@ set -Eeuo pipefail
 # and files under /usr/local.
 
 readonly GO_VERSION="1.27.3"
+readonly GO_MIN_VERSION="1.26.3"
 readonly GO_SHA256="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
 readonly REPOSITORY="https://github.com/druxuss/Kern.git"
 readonly REPOSITORY_REF="${KERN_BRANCH:-fix/improve}"
@@ -94,34 +95,47 @@ cleanup() {
 }
 trap cleanup EXIT
 current_go=""
-if [[ -x /usr/local/go/bin/go ]]; then
-    current_go="$(/usr/local/go/bin/go version | awk '{print $3}' | sed 's/^go//')"
-fi
-if [[ -z "$current_go" || "$(printf '%s\n' "$GO_VERSION" "$current_go" | sort -V | head -n1)" != "$GO_VERSION" ]]; then
-    tmp_dir="$(mktemp -d)"
-    archive="go${GO_VERSION}.linux-amd64.tar.gz"
-    if ! curl --fail --location --show-error --retry 2 --retry-all-errors \
-        --connect-timeout 20 --max-time 100 --progress-bar \
-        "https://go.dev/dl/${archive}" -o "${tmp_dir}/${archive}"; then
-        fail "could not download Go ${GO_VERSION} from go.dev after retries (about 5 minutes); check outbound HTTPS/DNS and rerun the installer"
+go_bin=""
+if [[ "${ID}" == "ubuntu" ]] && apt-cache show golang-1.26-go >/dev/null 2>&1; then
+    # Ubuntu 22.04 publishes Go 1.26 in Universe/security updates. Using the
+    # signed distro package avoids downloading the much larger upstream tarball.
+    sudo apt-get install -y golang-1.26-go
+    go_bin="/usr/lib/go-1.26/bin"
+else
+    if [[ -x /usr/local/go/bin/go ]]; then
+        current_go="$(/usr/local/go/bin/go version | awk '{print $3}' | sed 's/^go//')"
     fi
-    printf '%s  %s\n' "$GO_SHA256" "${tmp_dir}/${archive}" | sha256sum --check --status \
-        || fail "Go archive checksum verification failed"
+    if [[ -z "$current_go" || "$(printf '%s\n' "$GO_VERSION" "$current_go" | sort -V | head -n1)" != "$GO_VERSION" ]]; then
+        tmp_dir="$(mktemp -d)"
+        archive="go${GO_VERSION}.linux-amd64.tar.gz"
+        if ! curl --fail --location --show-error --retry 2 --retry-all-errors \
+            --connect-timeout 20 --max-time 100 --progress-bar \
+            "https://go.dev/dl/${archive}" -o "${tmp_dir}/${archive}"; then
+            fail "could not download Go ${GO_VERSION} from go.dev after retries (about 5 minutes); check outbound HTTPS/DNS and rerun the installer"
+        fi
+        printf '%s  %s\n' "$GO_SHA256" "${tmp_dir}/${archive}" | sha256sum --check --status \
+            || fail "Go archive checksum verification failed"
 
-    # Go's official installer requires replacing, not overlaying, an old tree.
-    if [[ -d /usr/local/go ]]; then
-        backup="/usr/local/go.kern-backup.$(date +%Y%m%d%H%M%S)"
-        sudo mv /usr/local/go "$backup"
-        printf 'Previous Go installation moved to %s\n' "$backup"
+        # Go's official installer requires replacing, not overlaying, an old tree.
+        if [[ -d /usr/local/go ]]; then
+            backup="/usr/local/go.kern-backup.$(date +%Y%m%d%H%M%S)"
+            sudo mv /usr/local/go "$backup"
+            printf 'Previous Go installation moved to %s\n' "$backup"
+        fi
+        sudo tar -C /usr/local -xzf "${tmp_dir}/${archive}"
     fi
-    sudo tar -C /usr/local -xzf "${tmp_dir}/${archive}"
+    go_bin="/usr/local/go/bin"
+fi
+current_go="$("${go_bin}/go" version | awk '{print $3}' | sed 's/^go//')"
+if [[ "$(printf '%s\n' "$GO_MIN_VERSION" "$current_go" | sort -V | head -n1)" != "$GO_MIN_VERSION" ]]; then
+    fail "Go ${current_go} is too old; need at least ${GO_MIN_VERSION}"
 fi
 
 # /usr/local/bin is already on Ubuntu's default PATH, including the shell that
 # launched this installer, so kern build can invoke Go immediately.
-sudo ln -sfn /usr/local/go/bin/go /usr/local/bin/go
-sudo ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
-export PATH="/usr/local/go/bin:${PATH}"
+sudo ln -sfn "${go_bin}/go" /usr/local/bin/go
+sudo ln -sfn "${go_bin}/gofmt" /usr/local/bin/gofmt
+export PATH="${go_bin}:${PATH}"
 printf 'Using %s\n' "$(go version)"
 
 printf '\n==> Building and installing kern (%s)\n' "$REPOSITORY_REF"
