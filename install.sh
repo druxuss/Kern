@@ -143,7 +143,10 @@ work_dir="$(mktemp -d)"
 git clone --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY" "$work_dir/source"
 (
     cd "$work_dir/source"
-    go build -trimpath -o "$work_dir/kern" ./cmd/
+    # The pipe separator makes Go try the next proxy after network errors,
+    # while normal go.sum / checksum-database verification remains enabled.
+    GOPROXY="${KERN_GOPROXY:-https://proxy.golang.org|https://goproxy.io|direct}" \
+        go build -trimpath -o "$work_dir/kern" ./cmd/
 )
 sudo install -m 0755 "$work_dir/kern" "$INSTALL_DIR/kern"
 sudo install -d -m 0755 "$INSTALL_DIR/profiles"
