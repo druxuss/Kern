@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/cli"
+	"github.com/druxuss/Kern/internal/cli"
 )
 
 func main() {

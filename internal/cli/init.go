@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/common"
+	"github.com/druxuss/Kern/internal/common"
 	"github.com/spf13/cobra"
 )
 

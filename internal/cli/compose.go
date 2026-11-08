@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/compose"
+	"github.com/druxuss/Kern/internal/compose"
 	"github.com/spf13/cobra"
 )
 

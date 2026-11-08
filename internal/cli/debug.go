@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/instances"
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/qmp"
+	"github.com/druxuss/Kern/internal/instances"
+	"github.com/druxuss/Kern/internal/qmp"
 	"github.com/spf13/cobra"
 )
 

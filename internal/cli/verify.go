@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/packager"
+	"github.com/druxuss/Kern/internal/packager"
 	"github.com/spf13/cobra"
 )
 

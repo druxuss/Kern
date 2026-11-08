@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/build"
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/kernfile"
+	"github.com/druxuss/Kern/internal/build"
+	"github.com/druxuss/Kern/internal/kernfile"
 	"github.com/spf13/cobra"
 )
 

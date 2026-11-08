@@ -1,4 +1,4 @@
-module github.com/Kern-Unikernel/Kern-Unikernel
+module github.com/druxuss/Kern
 
 go 1.26.3
 

@@ -1,15 +1,10 @@
-# action.yml
-name: 'kern'
-description: 'Build, sign and push applications as unikernels using kern'
-author: 'Kern-Unikernel'
+name: 'Kern'
+description: 'Build, verify and optionally push an application as a Kern unikernel'
+author: 'druxuss'
 
 inputs:
-  runtime:
-    description: 'Runtime to use (node, go, rust, python)'
-    required: false
-    default: 'auto'
   push:
-    description: 'Registry to push the image (e.g. ghcr.io/user/app:1.0.0)'
+    description: 'Optional image reference to push (for example ghcr.io/user/app:tag)'
     required: false
     default: ''
   registry-user:
@@ -21,7 +16,7 @@ inputs:
     required: false
     default: ''
   working-directory:
-    description: 'Directory containing the app'
+    description: 'Directory containing the application and Kernfile'
     required: false
     default: '.'
 
@@ -33,38 +28,22 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install dependencies
+    - name: Install Kern and runtime dependencies
       shell: bash
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq \
-          qemu-system-x86 qemu-kvm \
-          binutils skopeo buildah \
-          iproute2 bridge-utils
-        if ! command -v go &>/dev/null; then
-          curl -fsSL https://go.dev/dl/go1.22.4.linux-amd64.tar.gz \
-            | sudo tar -xz -C /usr/local
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
-        fi
-
-    - name: Install kern
-      shell: bash
-      run: |
-        git clone https://github.com/Kern-Unikernel/Kern-Unikernel.git /tmp/kern-src
-        cd /tmp/kern-src
-        go build -o kern ./cmd/
-        sudo mv kern /usr/local/bin/kern
-        sudo mkdir -p /usr/local/bin/profiles
-        sudo cp profiles/*.toml /usr/local/bin/profiles/
-        echo "kern installed: $(kern --help | head -1)"
+        set -euo pipefail
+        curl --fail --location --silent --show-error --retry 3 \
+          https://raw.githubusercontent.com/druxuss/Kern/main/install.sh | bash
+        kern --help >/dev/null
 
     - name: Build unikernel
       id: build
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
+        set -euo pipefail
         kern build
-        echo "image-path=$(pwd)/.unikernel/image.uki" >> $GITHUB_OUTPUT
+        echo "image-path=$(pwd)/.unikernel/image.uki" >> "$GITHUB_OUTPUT"
 
     - name: Verify image
       shell: bash
@@ -74,8 +53,13 @@ runs:
     - name: Push image
       if: inputs.push != ''
       shell: bash
+      env:
+        KERN_PUSH: ${{ inputs.push }}
+        KERN_REGISTRY_USER: ${{ inputs.registry-user }}
+        KERN_REGISTRY_TOKEN: ${{ inputs.registry-token }}
       working-directory: ${{ inputs.working-directory }}
       run: |
-        kern push ${{ inputs.push }} \
-          -u ${{ inputs.registry-user }} \
-          -p ${{ inputs.registry-token }}
+        set -euo pipefail
+        kern push "$KERN_PUSH" \
+          --username "$KERN_REGISTRY_USER" \
+          --password "$KERN_REGISTRY_TOKEN"

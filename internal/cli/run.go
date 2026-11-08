@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/instances"
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/kernfile"
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/runner"
+	"github.com/druxuss/Kern/internal/instances"
+	"github.com/druxuss/Kern/internal/kernfile"
+	"github.com/druxuss/Kern/internal/runner"
 	"github.com/spf13/cobra"
 )
 

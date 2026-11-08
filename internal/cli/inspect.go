@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Kern-Unikernel/Kern-Unikernel/internal/kernfile"
+	"github.com/druxuss/Kern/internal/kernfile"
 	"github.com/spf13/cobra"
 )
 
