@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, fix/improve ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -41,7 +41,7 @@ jobs:
 
   package-nightly:
     name: Publish Linux x86_64 installer bundle
-    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/improve'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-and-test
     runs-on: ubuntu-latest
     permissions:
@@ -70,7 +70,7 @@ jobs:
           tag_name: kern-nightly
           target_commitish: ${{ github.sha }}
           name: Kern nightly
-          body: Automated Linux x86_64 installer bundle from fix/improve.
+          body: Automated Linux x86_64 installer bundle from main.
           prerelease: true
           make_latest: false
           overwrite_files: true

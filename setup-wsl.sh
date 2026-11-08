@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-KERN_BRANCH="${KERN_BRANCH:-fix/improve}"
+KERN_BRANCH="${KERN_BRANCH:-main}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "${script_dir}/install.sh" ]]; then

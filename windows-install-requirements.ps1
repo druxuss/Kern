@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repoRef = if ($env:KERN_BRANCH) { $env:KERN_BRANCH } else { 'fix/improve' }
+$repoRef = if ($env:KERN_BRANCH) { $env:KERN_BRANCH } else { 'main' }
 if ($repoRef -notmatch '^[A-Za-z0-9._/-]+$') {
     throw "Invalid KERN_BRANCH value: $repoRef"
 }

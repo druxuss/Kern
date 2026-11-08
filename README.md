@@ -27,7 +27,7 @@ kern eliminates the operating system from the application lifecycle. Instead of 
 Run this same command from a Bash terminal on Linux or from the Ubuntu terminal in WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/druxuss/Kern/fix/improve/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/druxuss/Kern/main/install.sh | bash
 ```
 
 On Windows, if Ubuntu is not installed in WSL2 yet, run this once from an Administrator PowerShell:
