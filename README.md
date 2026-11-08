@@ -17,7 +17,8 @@ kern eliminates the operating system from the application lifecycle. Instead of 
 
 ## Requirements
 
-- x86_64 Ubuntu or Debian, or Ubuntu 22.04 in WSL2 on Windows
+- x86_64 Linux: Ubuntu/Debian, Fedora/RHEL-compatible, Arch Linux, or openSUSE (using apt, dnf/yum, pacman, or zypper)
+- Windows with WSL2 and an Ubuntu distribution
 - A user account with `sudo` access and an internet connection
 - KVM is optional; QEMU uses software emulation when hardware acceleration is unavailable
 
@@ -29,10 +30,10 @@ Run this same command from a Bash terminal on Linux or from the Ubuntu terminal 
 curl -fsSL https://raw.githubusercontent.com/druxuss/Kern/fix/improve/install.sh | bash
 ```
 
-On Windows, if Ubuntu 22.04 is not installed in WSL2 yet, run this once from an Administrator PowerShell:
+On Windows, if Ubuntu is not installed in WSL2 yet, run this once from an Administrator PowerShell:
 
 ```powershell
-wsl --install -d Ubuntu-22.04
+wsl --install -d Ubuntu
 ```
 
 Restart if Windows asks, finish creating the Linux user, open Ubuntu, and run the same Bash command above. Kern and its Linux dependencies are installed inside WSL. The installer fetches a prebuilt Kern binary and configures QEMU, Buildah, Skopeo, and the other host tools; Go, Docker, and application language toolchains are not required on the host.
