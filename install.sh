@@ -89,14 +89,15 @@ trap cleanup EXIT
 printf 'Downloading prebuilt kern bundle...\n'
 tmp_dir="$(mktemp -d)"
 archive="kern-linux-amd64.tar.gz"
+cache_buster="v=$(date +%s)"
 if ! curl --fail --location --silent --show-error --retry 2 --retry-all-errors \
     --connect-timeout 20 --max-time 300 \
-    "${RELEASE_URL}/${archive}" -o "${tmp_dir}/${archive}"; then
+    "${RELEASE_URL}/${archive}?${cache_buster}" -o "${tmp_dir}/${archive}"; then
     fail "could not download the prebuilt bundle; check the network or wait for the kern-nightly CI release"
 fi
 if ! curl --fail --location --silent --show-error --retry 2 --retry-all-errors \
     --connect-timeout 20 --max-time 60 \
-    "${RELEASE_URL}/${archive}.sha256" -o "${tmp_dir}/${archive}.sha256"; then
+    "${RELEASE_URL}/${archive}.sha256?${cache_buster}" -o "${tmp_dir}/${archive}.sha256"; then
     fail "could not download the bundle checksum"
 fi
 (
