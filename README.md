@@ -189,14 +189,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build unikernel
-        uses: Kern-Unikernel/action@v1
+        uses: druxuss/Kern/kern-action@main
         with:
           push: ghcr.io/${{ github.repository }}:${{ github.sha }}
           registry-user: ${{ github.actor }}
           registry-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-See [Kern-Unikernel/action](https://github.com/Kern-Unikernel/action) for full documentation.
+See [kern-action](https://github.com/druxuss/Kern/blob/main/kern-action/action.yml) for full documentation.
 
 ## The Kernfile
 
@@ -306,7 +306,7 @@ kern/
 - [x] kern push / pull (ghcr.io)
 - [x] kern secret set / get (AES-256-GCM)
 - [x] kern compose (multi-service with bridge networking)
-- [x] GitHub Action (Kern-Unikernel/action@v1)
+- [x] GitHub Action (druxuss/Kern/kern-action@main)
 - [x] Node.js 21 runtime
 - [x] Go 1.22 runtime
 - [x] Rust runtime
