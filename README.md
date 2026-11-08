@@ -268,7 +268,7 @@ kern build
   → SPDX-2.3     — generates SBOM
 ```
 
-Kernels are cached in `~/.cache/kern/kernels/` after the first build.
+Kern downloads a compressed kernel artifact for the selected runtime and caches it in `~/.cache/kern/kernels/`. If that release artifact is unavailable, it fetches only the kernel layer from Unikraft and skips the separate debug-symbol layer.
 
 ## Project structure
 

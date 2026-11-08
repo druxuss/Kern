@@ -57,6 +57,7 @@ jobs:
           mkdir -p dist/profiles
           go build -trimpath -ldflags='-s -w' -o dist/kern ./cmd/
           cp profiles/*.toml dist/profiles/
+          go run ./cmd/package-kernels dist/kernels node python go rust bun
           printf '%s\n' "$GITHUB_SHA" > dist/commit.txt
           tar -czf kern-linux-amd64.tar.gz -C dist kern profiles commit.txt
           sha256sum kern-linux-amd64.tar.gz > kern-linux-amd64.tar.gz.sha256
@@ -77,6 +78,7 @@ jobs:
           files: |
             kern-linux-amd64.tar.gz
             kern-linux-amd64.tar.gz.sha256
+            dist/kernels/kern-kernel-*
 
   windows-installer:
     name: Windows WSL installer syntax

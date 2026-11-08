@@ -39,7 +39,7 @@ if command -v apt-get >/dev/null 2>&1; then
         sudo add-apt-repository -y universe >/dev/null
     fi
     sudo env DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
-        "${common_packages[@]}" qemu-system-x86 uidmap iproute2 bridge-utils uml-utilities dnsmasq-base
+        "${common_packages[@]}" qemu-system-x86 uidmap iproute2 bridge-utils uml-utilities dnsmasq-base xz-utils
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
     if [[ "${ID}" == "fedora" || ( "$distro_like" == *" fedora "* && "$distro_like" != *" rhel "* ) ]]; then
         qemu_package="qemu-system-x86-core"
@@ -47,15 +47,15 @@ elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
         qemu_package="qemu-kvm"
     fi
     if command -v dnf >/dev/null 2>&1; then
-        sudo dnf -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq
+        sudo dnf -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq xz
     else
-        sudo yum -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq
+        sudo yum -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq xz
     fi
 elif command -v pacman >/dev/null 2>&1; then
-    sudo pacman -S --needed --noconfirm "${common_packages[@]}" qemu-system-x86 shadow iproute2 bridge-utils dnsmasq
+    sudo pacman -S --needed --noconfirm "${common_packages[@]}" qemu-system-x86 shadow iproute2 bridge-utils dnsmasq xz
 elif command -v zypper >/dev/null 2>&1; then
     sudo zypper --quiet --non-interactive install --no-recommends \
-        "${common_packages[@]}" qemu-x86 shadow iproute2 bridge-utils dnsmasq
+        "${common_packages[@]}" qemu-x86 shadow iproute2 bridge-utils dnsmasq xz
 else
     fail "unsupported Linux package manager; supported managers are apt, dnf/yum, pacman, and zypper"
 fi
@@ -136,7 +136,7 @@ sudo install -d -m 0755 "$INSTALL_DIR/profiles"
 sudo install -m 0644 "${tmp_dir}/bundle"/profiles/*.toml "$INSTALL_DIR/profiles/"
 
 printf 'Checking runtime tools...\n'
-for tool in qemu-system-x86_64 skopeo buildah cpio objcopy; do
+for tool in qemu-system-x86_64 skopeo buildah cpio objcopy xz; do
     command -v "$tool" >/dev/null 2>&1 || fail "required command not found after install: $tool"
 done
 smoke_dir="$(mktemp -d)"

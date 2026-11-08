@@ -1,13 +1,24 @@
 package build
 
 import (
+	"archive/tar"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 var runtimeOSMap = map[string]string{
@@ -18,108 +29,317 @@ var runtimeOSMap = map[string]string{
 	"bun":    "unikraft.org/bun:1.1",
 }
 
+const kernelImageAnnotation = "org.unikraft.kernel.image"
+const kernelReleaseURL = "https://github.com/druxuss/Kern/releases/download/kern-nightly"
+
+func DownloadKernel(runtime, destDir string) (string, error) {
+	return downloadKernel(runtime, destDir)
+}
+
 func downloadKernel(runtime, destDir string) (string, error) {
 	image, ok := runtimeOSMap[runtime]
 	if !ok {
 		return "", fmt.Errorf("runtime not supported: %q", runtime)
 	}
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		return "", fmt.Errorf("invalid Unikraft image %q: %w", image, err)
+	}
+	remoteImage, err := remote.Image(ref, remote.WithPlatform(v1.Platform{OS: "fc", Architecture: "x86_64"}))
+	if err != nil {
+		return "", fmt.Errorf("reading Unikraft image manifest for %s: %w", runtime, err)
+	}
+	manifest, err := remoteImage.Manifest()
+	if err != nil {
+		return "", fmt.Errorf("reading Unikraft image layers for %s: %w", runtime, err)
+	}
+	imageDigest, err := remoteImage.Digest()
+	if err != nil {
+		return "", fmt.Errorf("reading Unikraft image digest for %s: %w", runtime, err)
+	}
 
-	// Comprobar caché
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		cacheDir = os.TempDir()
 	}
 	kernelCacheDir := filepath.Join(cacheDir, "kern", "kernels", runtime)
 	cachedKernel := filepath.Join(kernelCacheDir, "kernel")
-
-	if _, err := os.Stat(cachedKernel); err == nil {
-		fmt.Printf("→ Using cached kernel for %s\n", runtime)
-		destPath := filepath.Join(destDir, "kernel")
-		if err := copyFile(cachedKernel, destPath); err != nil {
-			return "", err
-		}
-		return destPath, nil
-	}
-
-	// Descargar
-	ociDir := filepath.Join(destDir, "oci-"+runtime)
-	if err := os.MkdirAll(ociDir, 0755); err != nil {
+	cachedDigest := filepath.Join(kernelCacheDir, "image.digest")
+	destPath := filepath.Join(destDir, "kernel")
+	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", err
 	}
 
-	fmt.Printf("→ Downloading Unikraft kernel for %s...\n", runtime)
-
-	cmd := exec.Command("skopeo", "copy",
-		"--override-arch", "x86_64",
-		"--override-os", "qemu",
-		"docker://"+image,
-		"oci:"+ociDir,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("error downloading kernel: %w", err)
+	if _, err := os.Stat(cachedKernel); err == nil {
+		cacheDigest, digestErr := os.ReadFile(cachedDigest)
+		// Adopt a legacy cache once; older Kern releases did not store its source digest.
+		if (digestErr == nil && strings.TrimSpace(string(cacheDigest)) == imageDigest.String()) || os.IsNotExist(digestErr) {
+			if err := copyFile(cachedKernel, destPath); err != nil {
+				return "", err
+			}
+			if os.IsNotExist(digestErr) {
+				_ = os.WriteFile(cachedDigest, []byte(imageDigest.String()+"\n"), 0644)
+			}
+			if err := writeImageDigest(destDir, imageDigest.String()); err != nil {
+				return "", err
+			}
+			fmt.Printf("→ Using cached kernel for %s\n", runtime)
+			return destPath, nil
+		}
 	}
 
-	kernelPath, err := extractKernelFromOCI(ociDir, destDir)
+	kernelLayer, err := findKernelLayer(manifest)
 	if err != nil {
-		return "", fmt.Errorf("error extracting kernel: %w", err)
+		return "", fmt.Errorf("finding kernel layer for %s: %w", runtime, err)
 	}
 
-	os.RemoveAll(ociDir)
-
-	// Guardar en caché
-	if err := os.MkdirAll(kernelCacheDir, 0755); err == nil {
-		copyFile(kernelPath, cachedKernel)
-		fmt.Printf("✓ Kernel cached at %s\n", kernelCacheDir)
+	if available, err := downloadPrebuiltKernel(runtime, imageDigest.String(), destPath); err == nil && available {
+		cacheKernel(destPath, kernelCacheDir, cachedKernel, cachedDigest, imageDigest.String())
+		if err := writeImageDigest(destDir, imageDigest.String()); err != nil {
+			return "", err
+		}
+		return destPath, nil
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: prebuilt kernel unavailable (%v); using the Unikraft registry\n", err)
 	}
 
-	return kernelPath, nil
+	layer, err := remoteImage.LayerByDigest(kernelLayer.Digest)
+	if err != nil {
+		return "", fmt.Errorf("opening kernel layer for %s: %w", runtime, err)
+	}
+	content, err := layer.Uncompressed()
+	if err != nil {
+		return "", fmt.Errorf("downloading kernel layer for %s: %w", runtime, err)
+	}
+	defer content.Close()
+
+	fmt.Printf("→ Downloading %s kernel layer (%.1f MiB; debug symbols skipped)...\n", runtime, float64(kernelLayer.Size)/(1024*1024))
+	if err := extractKernelLayer(content, kernelLayer.Annotations[kernelImageAnnotation], destPath, kernelLayer.Size); err != nil {
+		return "", fmt.Errorf("extracting kernel layer for %s: %w", runtime, err)
+	}
+	if err := writeImageDigest(destDir, imageDigest.String()); err != nil {
+		return "", err
+	}
+	cacheKernel(destPath, kernelCacheDir, cachedKernel, cachedDigest, imageDigest.String())
+	return destPath, nil
 }
 
-func extractKernelFromOCI(ociDir, destDir string) (string, error) {
-	// Listar blobs
-	blobsDir := filepath.Join(ociDir, "blobs", "sha256")
-	entries, err := os.ReadDir(blobsDir)
+func downloadPrebuiltKernel(runtime, imageDigest, outputPath string) (bool, error) {
+	client := &http.Client{Timeout: time.Hour}
+	return downloadPrebuiltKernelFrom(client, kernelReleaseURL, runtime, imageDigest, outputPath)
+}
+
+func downloadPrebuiltKernelFrom(client *http.Client, releaseURL, runtime, imageDigest, outputPath string) (bool, error) {
+	asset := "kern-kernel-" + runtime + "-x86_64.xz"
+	prefix := strings.TrimRight(releaseURL, "/") + "/" + asset
+	sourceDigest, found, err := readKernelAsset(client, prefix+".image-digest")
+	if err != nil || !found || strings.TrimSpace(string(sourceDigest)) != imageDigest {
+		return false, err
+	}
+	checksum, found, err := readKernelAsset(client, prefix+".sha256")
+	if err != nil || !found {
+		return false, err
+	}
+	fields := strings.Fields(string(checksum))
+	if len(fields) == 0 || len(fields[0]) != sha256.Size*2 {
+		return false, fmt.Errorf("invalid prebuilt kernel checksum")
+	}
+	expected, err := hex.DecodeString(fields[0])
 	if err != nil {
-		return "", fmt.Errorf("error reading blobs: %w", err)
+		return false, fmt.Errorf("invalid prebuilt kernel checksum: %w", err)
 	}
 
-	kernelPath := filepath.Join(destDir, "kernel")
-
-	// Buscar el blob que contiene el kernel
-	for _, entry := range entries {
-		blobPath := filepath.Join(blobsDir, entry.Name())
-
-		// Intentar extraer y buscar el kernel
-		extractDir := filepath.Join(destDir, "extract-"+entry.Name()[:8])
-		if err := os.MkdirAll(extractDir, 0755); err != nil {
-			continue
-		}
-
-		cmd := exec.Command("tar", "xzf", blobPath, "-C", extractDir, "--no-same-owner", "--no-same-permissions")
-		if err := cmd.Run(); err != nil {
-			os.RemoveAll(extractDir)
-			continue
-		}
-
-		// Buscar el kernel dentro
-		candidate := filepath.Join(extractDir, "unikraft", "bin", "kernel")
-		if _, err := os.Stat(candidate); err == nil {
-			// Copiar el kernel al destino
-			if err := copyFile(candidate, kernelPath); err != nil {
-				os.RemoveAll(extractDir)
-				continue
-			}
-			os.Chmod(kernelPath, 0755)
-			os.RemoveAll(extractDir)
-			return kernelPath, nil
-		}
-
-		os.RemoveAll(extractDir)
+	response, err := client.Get(prefix)
+	if err != nil {
+		return false, err
 	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("kernel asset returned HTTP %s", response.Status)
+	}
+	archive, err := os.CreateTemp(filepath.Dir(outputPath), ".kern-kernel-*.xz")
+	if err != nil {
+		return false, err
+	}
+	archivePath := archive.Name()
+	defer os.Remove(archivePath)
+	hash := sha256.New()
+	progress := &kernelLayerProgress{reader: io.TeeReader(response.Body, hash), total: response.ContentLength, next: 5 * 1024 * 1024}
+	_, copyErr := io.Copy(archive, progress)
+	closeErr := archive.Close()
+	if copyErr != nil {
+		return false, copyErr
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if !bytes.Equal(hash.Sum(nil), expected) {
+		return false, fmt.Errorf("prebuilt kernel checksum mismatch")
+	}
+	fmt.Println()
 
-	return "", fmt.Errorf("kernel not found in OCI image")
+	output, err := os.CreateTemp(filepath.Dir(outputPath), ".kern-kernel-*")
+	if err != nil {
+		return false, err
+	}
+	tempPath := output.Name()
+	defer func() {
+		output.Close()
+		os.Remove(tempPath)
+	}()
+	decompress := exec.Command("xz", "-dc", archivePath)
+	decompress.Stdout = output
+	var stderr bytes.Buffer
+	decompress.Stderr = &stderr
+	if err := decompress.Run(); err != nil {
+		return false, fmt.Errorf("decompressing prebuilt kernel: %w: %s", err, stderr.String())
+	}
+	if err := output.Chmod(0755); err != nil {
+		return false, err
+	}
+	if err := output.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return false, err
+	}
+	fmt.Println("✓ Prebuilt kernel downloaded")
+	return true, nil
+}
+
+func readKernelAsset(client *http.Client, url string) ([]byte, bool, error) {
+	response, err := client.Get(url)
+	if err != nil {
+		return nil, false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("kernel metadata returned HTTP %s", response.Status)
+	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	return content, true, err
+}
+
+func writeImageDigest(destDir, digest string) error {
+	return os.WriteFile(filepath.Join(destDir, "image.digest"), []byte(digest+"\n"), 0644)
+}
+
+func cacheKernel(source, cacheDir, cachedKernel, cachedDigest, imageDigest string) {
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return
+	}
+	if err := copyFile(source, cachedKernel); err != nil {
+		return
+	}
+	if err := os.WriteFile(cachedDigest, []byte(imageDigest+"\n"), 0644); err != nil {
+		return
+	}
+	fmt.Printf("✓ Kernel cached at %s\n", cacheDir)
+}
+
+func findKernelLayer(manifest *v1.Manifest) (v1.Descriptor, error) {
+	for _, layer := range manifest.Layers {
+		if layer.Annotations[kernelImageAnnotation] != "" {
+			return layer, nil
+		}
+	}
+	return v1.Descriptor{}, fmt.Errorf("image has no layer annotated with %q", kernelImageAnnotation)
+}
+
+func extractKernelLayer(content io.Reader, imagePath, outputPath string, totalSize int64) error {
+	if imagePath == "" {
+		return fmt.Errorf("kernel layer has no image path annotation")
+	}
+	for _, segment := range strings.Split(strings.ReplaceAll(imagePath, "\\", "/"), "/") {
+		if segment == ".." {
+			return fmt.Errorf("unsafe kernel image path %q", imagePath)
+		}
+	}
+	target := strings.TrimPrefix(path.Clean(imagePath), "/")
+	if target == "." || target == ".." || strings.HasPrefix(target, "../") {
+		return fmt.Errorf("unsafe kernel image path %q", imagePath)
+	}
+	output, err := os.CreateTemp(filepath.Dir(outputPath), ".kern-kernel-*")
+	if err != nil {
+		return err
+	}
+	tempPath := output.Name()
+	keepOutput := false
+	defer func() {
+		_ = output.Close()
+		if !keepOutput {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	progress := &kernelLayerProgress{reader: content, total: totalSize, next: 5 * 1024 * 1024}
+	archive := tar.NewReader(progress)
+	found := false
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		member := strings.TrimPrefix(path.Clean(header.Name), "./")
+		if member != target {
+			continue
+		}
+		if found {
+			return fmt.Errorf("kernel path %q occurs more than once", imagePath)
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return fmt.Errorf("kernel path %q is not a regular file", imagePath)
+		}
+		if _, err := io.CopyN(output, archive, header.Size); err != nil {
+			return err
+		}
+		found = true
+	}
+	fmt.Printf("✓ Kernel layer downloaded (%.1f MiB)\n", float64(progress.read)/(1024*1024))
+	if !found {
+		return fmt.Errorf("kernel file %q not found in its OCI layer", imagePath)
+	}
+	if err := output.Chmod(0755); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return err
+	}
+	keepOutput = true
+	return nil
+}
+
+type kernelLayerProgress struct {
+	reader io.Reader
+	total  int64
+	read   int64
+	next   int64
+}
+
+func (p *kernelLayerProgress) Read(buffer []byte) (int, error) {
+	n, err := p.reader.Read(buffer)
+	p.read += int64(n)
+	if p.read >= p.next {
+		if p.total > 0 {
+			fmt.Printf("\r  Downloaded %.1f/%.1f MiB", float64(p.read)/(1024*1024), float64(p.total)/(1024*1024))
+		} else {
+			fmt.Printf("\r  Downloaded %.1f MiB", float64(p.read)/(1024*1024))
+		}
+		p.next = ((p.read / (5 * 1024 * 1024)) + 1) * (5 * 1024 * 1024)
+	}
+	return n, err
 }
 
 func buildRootfs(projectPath, runtime string) (string, error) {
