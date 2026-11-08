@@ -145,7 +145,7 @@ git clone --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY" "$work_dir/source"
     cd "$work_dir/source"
     # The pipe separator makes Go try the next proxy after network errors,
     # while normal go.sum / checksum-database verification remains enabled.
-    GOPROXY="${KERN_GOPROXY:-https://proxy.golang.org|https://goproxy.io|direct}" \
+    GOPROXY="${KERN_GOPROXY:-https://goproxy.io|https://proxy.golang.org|direct}" \
         go build -trimpath -o "$work_dir/kern" ./cmd/
 )
 sudo install -m 0755 "$work_dir/kern" "$INSTALL_DIR/kern"
