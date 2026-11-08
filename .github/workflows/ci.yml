@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, fix/improve ]
   pull_request:
     branches: [ main ]
 
@@ -38,6 +38,45 @@ jobs:
 
       - name: Validate Linux installer syntax
         run: bash -n install.sh setup-wsl.sh
+
+  package-nightly:
+    name: Publish Linux x86_64 installer bundle
+    if: github.event_name == 'push' && github.ref == 'refs/heads/fix/improve'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Build and package kern
+        run: |
+          mkdir -p dist/profiles
+          go build -trimpath -ldflags='-s -w' -o dist/kern ./cmd/
+          cp profiles/*.toml dist/profiles/
+          printf '%s\n' "$GITHUB_SHA" > dist/commit.txt
+          tar -czf kern-linux-amd64.tar.gz -C dist kern profiles commit.txt
+          sha256sum kern-linux-amd64.tar.gz > kern-linux-amd64.tar.gz.sha256
+          ./dist/kern --help >/dev/null
+          tar -tzf kern-linux-amd64.tar.gz | grep -qx kern
+          tar -tzf kern-linux-amd64.tar.gz | grep -qx profiles/node.toml
+      - name: Publish rolling installer release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: kern-nightly
+          target_commitish: ${{ github.sha }}
+          name: Kern nightly
+          body: Automated Linux x86_64 installer bundle from fix/improve.
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: |
+            kern-linux-amd64.tar.gz
+            kern-linux-amd64.tar.gz.sha256
 
   windows-installer:
     name: Windows WSL installer syntax
