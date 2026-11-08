@@ -12,11 +12,6 @@ import (
 )
 
 func Build(config *kernfile.KernfileConfig, projectPath string) error {
-	fmt.Println("→ Installing dependencies...")
-	if err := installDependencies(config.App.Runtime, projectPath); err != nil {
-		return fmt.Errorf("error installing dependencies: %w", err)
-	}
-
 	fmt.Println("→ Generating Dockerfile...")
 	if err := generateDockerfile(config.App.Runtime, config.App.Entry, projectPath); err != nil {
 		return fmt.Errorf("error generating Dockerfile: %w", err)
@@ -112,28 +107,6 @@ func Build(config *kernfile.KernfileConfig, projectPath string) error {
 	fmt.Println("✓ SBOM generated")
 	fmt.Printf("✓ Build completed — Kraftfile generated at %s\n", kraftfilePath)
 	return nil
-}
-
-func installDependencies(runtime, projectPath string) error {
-	var cmd *exec.Cmd
-	switch runtime {
-	case "node":
-		cmd = exec.Command("npm", "install", "--production")
-	case "python":
-		cmd = exec.Command("python3.12", "-m", "pip", "install", "-r", "requirements.txt")
-	case "go":
-		cmd = exec.Command("go", "mod", "download")
-	case "bun":
-		cmd = exec.Command("bun", "install", "--production")
-	case "rust":
-		cmd = exec.Command("cargo", "build", "--release")
-	default:
-		return fmt.Errorf("runtime not supported: %q", runtime)
-	}
-	cmd.Dir = projectPath
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func generateDockerfile(runtime, entry, projectPath string) error {
