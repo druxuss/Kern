@@ -17,40 +17,32 @@ kern eliminates the operating system from the application lifecycle. Instead of 
 
 ## Requirements
 
-- Linux with KVM support (`kvm-ok` to verify)
-- `skopeo` — to download Unikraft kernels
-- `buildah` — to build the rootfs (no Docker daemon needed)
-- `qemu-system-x86_64` — to run unikernels
-- `objcopy` (included in `binutils`)
-- Go 1.26.3+
+- x86_64 Ubuntu or Debian, or Ubuntu 22.04 in WSL2 on Windows
+- A user account with `sudo` access and an internet connection
+- KVM is optional; QEMU uses software emulation when hardware acceleration is unavailable
 
 ## Installation
 
-**Linux:**
+Run this same command from a Bash terminal on Linux or from the Ubuntu terminal in WSL2:
+
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Kern-Unikernel/Kern-Unikernel/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/druxuss/Kern/fix/improve/install.sh | bash
 ```
 
-**Windows (WSL2):**
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Kern-Unikernel/Kern-Unikernel/main/setup-wsl.sh)
+On Windows, if Ubuntu 22.04 is not installed in WSL2 yet, run this once from an Administrator PowerShell:
+
+```powershell
+wsl --install -d Ubuntu-22.04
 ```
 
-Or manually:
-```bash
-git clone https://github.com/Kern-Unikernel/Kern-Unikernel.git
-cd Kern-Unikernel
-go build -o kern ./cmd/
-sudo mv kern /usr/local/bin/kern
-sudo cp -r profiles/ /usr/local/bin/profiles/
-```
-
-## Usage
+Restart if Windows asks, finish creating the Linux user, open Ubuntu, and run the same Bash command above. Kern and its Linux dependencies are installed inside WSL. The installer fetches a prebuilt Kern binary and configures QEMU, Buildah, Skopeo, and the other host tools; Go, Docker, and application language toolchains are not required on the host.
 
 ### Initialize a project
 
+In an existing application directory containing a supported runtime manifest (`package.json`, `go.mod`, `Cargo.toml`, or `requirements.txt`), initialize the Kernfile and confirm the prompt:
+
 ```bash
-cd my-app
+cd path/to/my-app
 kern init
 ```
 
