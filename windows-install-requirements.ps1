@@ -26,27 +26,27 @@ $distros = @(& wsl.exe --list --quiet 2>$null | ForEach-Object {
 
 if ($distros.Count -eq 0) {
     if (-not (Test-Administrator)) {
-        throw 'No Ubuntu WSL distribution is installed. Open PowerShell as Administrator and run: wsl --install -d Ubuntu-22.04. Reboot if asked, finish Ubuntu first-run setup, then run this installer command again.'
+        throw 'No Ubuntu WSL distribution is installed. Open PowerShell as Administrator and run: wsl --install -d Ubuntu. Reboot if asked, finish Ubuntu first-run setup, then run this installer command again.'
     }
 
-    Write-Host 'Installing Ubuntu 22.04 in WSL. Windows may require a reboot.' -ForegroundColor Cyan
-    & wsl.exe --install -d Ubuntu-22.04 --no-launch
+    Write-Host 'Installing Ubuntu in WSL. Windows may require a reboot.' -ForegroundColor Cyan
+    & wsl.exe --install -d Ubuntu --no-launch
     if ($LASTEXITCODE -ne 0) {
-        throw 'WSL could not install Ubuntu. Reboot if requested, finish `wsl --install -d Ubuntu-22.04`, then run this installer command again.'
+        throw 'WSL could not install Ubuntu. Reboot if requested, finish `wsl --install -d Ubuntu`, then run this installer command again.'
     }
     $registered = @(& wsl.exe --list --quiet 2>$null | ForEach-Object {
         ($_ -replace "`0", '').Trim()
-    } | Where-Object { $_ -eq 'Ubuntu-22.04' })
+    } | Where-Object { $_ -eq 'Ubuntu' })
     if ($registered.Count -eq 0) {
         throw 'WSL setup requires a reboot before Ubuntu can be registered. Reboot, finish Ubuntu first-run setup, then rerun this installer command.'
     }
-    $Distro = 'Ubuntu-22.04'
+    $Distro = 'Ubuntu'
     & wsl.exe -d $Distro
     if ($LASTEXITCODE -ne 0) {
         throw 'Ubuntu first-run setup did not complete. Finish creating the Linux user, then run this installer command again.'
     }
 } else {
-    $Distro = ($distros | Where-Object { $_ -eq 'Ubuntu-22.04' } | Select-Object -First 1)
+    $Distro = ($distros | Where-Object { $_ -eq 'Ubuntu' } | Select-Object -First 1)
     if (-not $Distro) {
         $Distro = ($distros | Select-Object -First 1)
     }

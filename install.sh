@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# One-command installer for Ubuntu/Debian x86_64 and Ubuntu on WSL2.
+# One-command installer for mainstream x86_64 Linux distributions and WSL2.
 # Run as the target user; sudo is used only for packages and /usr/local.
 
 readonly RELEASE_URL="https://github.com/druxuss/Kern/releases/download/kern-nightly"
@@ -18,29 +18,47 @@ fi
 if ! command -v sudo >/dev/null 2>&1; then
     fail "sudo is required to install system packages"
 fi
-if ! command -v apt-get >/dev/null 2>&1 || [[ ! -r /etc/os-release ]]; then
-    fail "supported hosts are Ubuntu/Debian x86_64"
+if [[ ! -r /etc/os-release ]]; then
+    fail "cannot identify this Linux distribution (/etc/os-release is missing)"
 fi
 # shellcheck disable=SC1091
 source /etc/os-release
-if [[ "${ID:-}" != "ubuntu" && "${ID:-}" != "debian" ]]; then
-    fail "supported hosts are Ubuntu/Debian; detected ${PRETTY_NAME:-unknown}"
-fi
 if [[ "$(uname -m)" != "x86_64" ]]; then
-    fail "the current build and QEMU pipeline targets x86_64; detected $(uname -m)"
+    fail "this release targets x86_64; detected $(uname -m)"
 fi
 
 sudo -v
 printf 'Installing runtime packages...\n'
-sudo apt-get -qq update
-if [[ "${ID}" == "ubuntu" ]] && ! apt-cache show buildah >/dev/null 2>&1; then
-    sudo apt-get -qq install -y software-properties-common
-    sudo add-apt-repository -y universe >/dev/null
+common_packages=(ca-certificates curl binutils cpio tar findutils skopeo buildah fuse-overlayfs crun slirp4netns)
+distro_like=" ${ID_LIKE:-} "
+if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get -qq update
+    if [[ "${ID}" == "ubuntu" || "$distro_like" == *" ubuntu "* ]] \
+        && ! apt-cache show buildah >/dev/null 2>&1; then
+        sudo apt-get -qq install -y software-properties-common
+        sudo add-apt-repository -y universe >/dev/null
+    fi
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
+        "${common_packages[@]}" qemu-system-x86 uidmap iproute2 bridge-utils uml-utilities dnsmasq-base
+elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+    if [[ "${ID}" == "fedora" || ( "$distro_like" == *" fedora "* && "$distro_like" != *" rhel "* ) ]]; then
+        qemu_package="qemu-system-x86-core"
+    else
+        qemu_package="qemu-kvm"
+    fi
+    if command -v dnf >/dev/null 2>&1; then
+        sudo dnf -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq
+    else
+        sudo yum -q install -y "${common_packages[@]}" "$qemu_package" shadow-utils iproute bridge-utils dnsmasq
+    fi
+elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -S --needed --noconfirm "${common_packages[@]}" qemu-system-x86 shadow iproute2 bridge-utils dnsmasq
+elif command -v zypper >/dev/null 2>&1; then
+    sudo zypper --quiet --non-interactive install --no-recommends \
+        "${common_packages[@]}" qemu-x86 shadow iproute2 bridge-utils dnsmasq
+else
+    fail "unsupported Linux package manager; supported managers are apt, dnf/yum, pacman, and zypper"
 fi
-sudo env DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
-    ca-certificates curl binutils cpio tar findutils \
-    qemu-system-x86 cpu-checker skopeo buildah uidmap fuse-overlayfs crun slirp4netns \
-    iproute2 bridge-utils uml-utilities dnsmasq-base
 
 printf 'Preparing rootless container storage...\n'
 ensure_subid_range() {
@@ -68,12 +86,13 @@ mkdir -p "$HOME/.config/containers"
 storage_config="$HOME/.config/containers/storage.conf"
 created_storage_config=0
 if [[ ! -e "$storage_config" ]]; then
-    cat >"$storage_config" <<'EOF'
+    fuse_overlay_path="$(command -v fuse-overlayfs)"
+    cat >"$storage_config" <<EOF
 [storage]
 driver = "overlay"
 
 [storage.options]
-mount_program = "/usr/bin/fuse-overlayfs"
+mount_program = "${fuse_overlay_path}"
 EOF
     created_storage_config=1
 fi
@@ -141,7 +160,7 @@ buildah rmi "$smoke_image" >/dev/null 2>&1
 rm -rf "$smoke_dir"
 smoke_dir=""
 printf 'Runtime: QEMU %s; ' "$(qemu-system-x86_64 --version | head -n1 | sed 's/^QEMU emulator version //; s/ .*//')"
-if kvm-ok >/dev/null 2>&1; then
+if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
     printf 'KVM acceleration available\n'
 else
     printf 'using QEMU emulation (KVM unavailable)\n'
