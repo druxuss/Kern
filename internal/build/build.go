@@ -2,7 +2,6 @@ package build
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,30 +28,23 @@ func Build(config *kernfile.KernfileConfig, projectPath string) error {
 		return fmt.Errorf("error creating build directory: %w", err)
 	}
 
-	kernelPath, kerr := downloadKernel(config.App.Runtime, unikraftDir)
-	if kerr != nil {
-		fmt.Println("warning: skopeo not available, falling back to kraft...")
-		if err := runBuild(projectPath); err != nil {
-			return fmt.Errorf("error compiling: %w", err)
-		}
-		if err := copyKernel(projectPath); err != nil {
-			fmt.Printf("warning: could not copy kernel: %v\n", err)
-		}
-	} else {
-		fmt.Printf("✓ Kernel downloaded at %s\n", kernelPath)
-
-		rootfsDir, err := buildRootfs(projectPath, config.App.Runtime)
-		if err != nil {
-			return fmt.Errorf("error building rootfs: %w", err)
-		}
-
-		initrdPath := filepath.Join(unikraftDir, "initramfs-x86_64.cpio")
-		if err := generateInitramfs(rootfsDir, initrdPath); err != nil {
-			return fmt.Errorf("error generating initramfs: %w", err)
-		}
-		fmt.Println("✓ Initramfs generated")
-		os.RemoveAll(rootfsDir)
+	kernelPath, err := downloadKernel(config.App.Runtime, unikraftDir)
+	if err != nil {
+		return fmt.Errorf("error downloading Unikraft kernel: %w", err)
 	}
+	fmt.Printf("✓ Kernel downloaded at %s\n", kernelPath)
+
+	rootfsDir, err := buildRootfs(projectPath, config.App.Runtime)
+	if err != nil {
+		return fmt.Errorf("error building rootfs: %w", err)
+	}
+
+	initrdPath := filepath.Join(unikraftDir, "initramfs-x86_64.cpio")
+	if err := generateInitramfs(rootfsDir, initrdPath); err != nil {
+		return fmt.Errorf("error generating initramfs: %w", err)
+	}
+	fmt.Println("✓ Initramfs generated")
+	os.RemoveAll(rootfsDir)
 
 	ukiPath := filepath.Join(projectPath, ".unikernel", "image.uki")
 	prevPath := filepath.Join(projectPath, ".unikernel", "image.uki.prev")
@@ -218,81 +210,6 @@ func generateKraftfile(config *kernfile.KernfileConfig, projectPath string) (str
 		return "", err
 	}
 	return kraftfilePath, nil
-}
-
-func runBuild(projectPath string) error {
-	logPath := filepath.Join(projectPath, ".unikernel", "build.log")
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		return err
-	}
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return err
-	}
-	defer logFile.Close()
-
-	cmd := exec.Command("kraft", "build", "--plat", "qemu", "--arch", "x86_64")
-	cmd.Dir = projectPath
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	return cmd.Run()
-}
-
-func copyKernel(projectPath string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	runtimeDir := filepath.Join(home, ".local", "share", "kraftkit", "runtime")
-	entries, err := os.ReadDir(runtimeDir)
-	if err != nil {
-		return fmt.Errorf("kraftkit runtime directory not found: %w", err)
-	}
-
-	var kernelPath string
-	var latestTime int64
-
-	for _, entry := range entries {
-		candidate := filepath.Join(runtimeDir, entry.Name(), "unikraft", "bin", "kernel")
-		info, err := os.Stat(candidate)
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Unix() > latestTime {
-			latestTime = info.ModTime().Unix()
-			kernelPath = candidate
-		}
-	}
-
-	if kernelPath == "" {
-		return fmt.Errorf("kernel not found in kraftkit runtime")
-	}
-
-	destDir := filepath.Join(projectPath, ".unikraft", "build")
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	destPath := filepath.Join(destDir, "kernel")
-
-	src, err := os.Open(kernelPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	dst, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		return err
-	}
-
-	return os.Chmod(destPath, 0755)
 }
 
 func generateUKI(config *kernfile.KernfileConfig, projectPath string) error {

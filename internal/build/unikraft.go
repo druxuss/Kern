@@ -93,14 +93,16 @@ func downloadKernel(runtime, destDir string) (string, error) {
 		return "", fmt.Errorf("finding kernel layer for %s: %w", runtime, err)
 	}
 
-	if available, err := downloadPrebuiltKernel(runtime, imageDigest.String(), destPath); err == nil && available {
+	available, err := downloadPrebuiltKernel(runtime, imageDigest.String(), destPath)
+	if err != nil {
+		return "", fmt.Errorf("downloading the prebuilt kernel asset: %w", err)
+	}
+	if available {
 		cacheKernel(destPath, kernelCacheDir, cachedKernel, cachedDigest, imageDigest.String())
 		if err := writeImageDigest(destDir, imageDigest.String()); err != nil {
 			return "", err
 		}
 		return destPath, nil
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: prebuilt kernel unavailable (%v); using the Unikraft registry\n", err)
 	}
 
 	layer, err := remoteImage.LayerByDigest(kernelLayer.Digest)
