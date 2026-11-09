@@ -122,4 +122,7 @@ func TestBuildQEMUArgsEscapesAndOrdersEnvironment(t *testing.T) {
 	if aIndex == -1 || zIndex == -1 || aIndex > zIndex {
 		t.Fatalf("environment variables are missing, unescaped, or nondeterministic: %s", appendValue)
 	}
+	if strings.Contains(appendValue, `"A_VALUE=quote\"and\\slash",`) {
+		t.Fatalf("Unikraft array items must be separated by whitespace, not commas: %s", appendValue)
+	}
 }

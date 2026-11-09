@@ -125,7 +125,9 @@ func BuildQEMUArgs(cfg RunConfig) []string {
 	for _, name := range envNames {
 		envList = append(envList, strconv.Quote(name+"="+cfg.Env[name]))
 	}
-	envVars := strings.Join(envList, ", ")
+	// uklibparam parses array elements as whitespace-separated quoted values;
+	// comma separators prevent later variables from reaching posix-environ.
+	envVars := strings.Join(envList, " ")
 	appendStr := fmt.Sprintf(`vfs.fstab=[ "initrd0:/:extract:::" ] env.vars=[ %s ] -- %s`, envVars, cfg.AppCmd)
 	machine := "pc"
 	if cfg.Hypervisor == HypervisorHVF {
