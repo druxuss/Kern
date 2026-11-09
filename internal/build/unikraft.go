@@ -388,6 +388,9 @@ func buildRootfs(projectPath, runtime string) (string, error) {
 }
 
 func extractOCILayer(tarPath, rootfsDir string) error {
+	if err := os.RemoveAll(rootfsDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(rootfsDir, 0755); err != nil {
 		return err
 	}
@@ -434,28 +437,34 @@ func extractOCILayer(tarPath, rootfsDir string) error {
 		return fmt.Errorf("no layers found in OCI image")
 	}
 
-	layerDigest := strings.TrimPrefix(manifest.Layers[0].Digest, "sha256:")
-	layerPath := "blobs/sha256/" + layerDigest
+	// OCI layers are deltas; apply every layer in manifest order to reconstruct
+	// the final root filesystem rather than extracting only the base layer.
+	for i, layerDesc := range manifest.Layers {
+		layerDigest := strings.TrimPrefix(layerDesc.Digest, "sha256:")
+		if decoded, err := hex.DecodeString(layerDigest); err != nil || len(decoded) != sha256.Size {
+			return fmt.Errorf("invalid digest for OCI layer %d", i)
+		}
+		layerPath := "blobs/sha256/" + layerDigest
 
-	// Extraer la capa
-	extractCmd := exec.Command("tar", "xOf", tarPath, layerPath)
-	untarCmd := exec.Command("tar", "-xz", "-C", rootfsDir, "--no-same-owner", "--no-same-permissions")
-	layer, err := extractCmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("error opening OCI layer: %w", err)
-	}
-	untarCmd.Stdin = layer
-	untarCmd.Stderr = os.Stderr
-	if err := untarCmd.Start(); err != nil {
-		return fmt.Errorf("error starting layer extraction: %w", err)
-	}
-	if err := extractCmd.Run(); err != nil {
-		_ = untarCmd.Process.Kill()
-		_ = untarCmd.Wait()
-		return fmt.Errorf("error reading OCI layer: %w", err)
-	}
-	if err := untarCmd.Wait(); err != nil {
-		return fmt.Errorf("error extracting layer: %w", err)
+		extractCmd := exec.Command("tar", "xOf", tarPath, layerPath)
+		untarCmd := exec.Command("tar", "-xz", "-C", rootfsDir, "--no-same-owner", "--no-same-permissions")
+		layer, err := extractCmd.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("error opening OCI layer %d: %w", i, err)
+		}
+		untarCmd.Stdin = layer
+		untarCmd.Stderr = os.Stderr
+		if err := untarCmd.Start(); err != nil {
+			return fmt.Errorf("error starting extraction of OCI layer %d: %w", i, err)
+		}
+		if err := extractCmd.Run(); err != nil {
+			_ = untarCmd.Process.Kill()
+			_ = untarCmd.Wait()
+			return fmt.Errorf("error reading OCI layer %d: %w", i, err)
+		}
+		if err := untarCmd.Wait(); err != nil {
+			return fmt.Errorf("error extracting OCI layer %d: %w", i, err)
+		}
 	}
 
 	return nil
@@ -473,6 +482,7 @@ func generateInitramfs(rootfsDir, outputPath string) error {
 	findCmd := exec.Command("find", ".")
 	findCmd.Dir = rootfsDir
 	cpioCmd := exec.Command("cpio", "-o", "-H", "newc")
+	cpioCmd.Dir = rootfsDir
 	files, err := findCmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("error listing rootfs: %w", err)
