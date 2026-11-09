@@ -31,6 +31,13 @@ func TestFindKernelLayerSkipsDebugLayer(t *testing.T) {
 	}
 }
 
+func TestKernelCacheIsPlatformSpecific(t *testing.T) {
+	cache := kernelCachePath(t.TempDir(), "node")
+	if filepath.Base(cache) != "qemu" || filepath.Base(filepath.Dir(cache)) != "node" {
+		t.Fatalf("kernel cache path %q does not isolate runtime and platform", cache)
+	}
+}
+
 func TestFindKernelLayerRejectsImagesWithoutKernel(t *testing.T) {
 	_, err := findKernelLayer(&v1.Manifest{Layers: []v1.Descriptor{{
 		Annotations: map[string]string{"org.unikraft.kernel.imagedbg": "/unikraft/bin/kernel.dbg"},

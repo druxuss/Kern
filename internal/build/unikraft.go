@@ -63,7 +63,10 @@ func downloadKernel(runtime, destDir string) (string, error) {
 	if err != nil {
 		cacheDir = os.TempDir()
 	}
-	kernelCacheDir := filepath.Join(cacheDir, "kern", "kernels", runtime)
+	// Keep kernels for different Unikraft platforms isolated. Older releases
+	// cached the Firecracker kernel under the runtime-only path, which QEMU
+	// cannot boot directly.
+	kernelCacheDir := kernelCachePath(cacheDir, runtime)
 	cachedKernel := filepath.Join(kernelCacheDir, "kernel")
 	cachedDigest := filepath.Join(kernelCacheDir, "image.digest")
 	destPath := filepath.Join(destDir, "kernel")
@@ -125,6 +128,10 @@ func downloadKernel(runtime, destDir string) (string, error) {
 	}
 	cacheKernel(destPath, kernelCacheDir, cachedKernel, cachedDigest, imageDigest.String())
 	return destPath, nil
+}
+
+func kernelCachePath(cacheDir, runtime string) string {
+	return filepath.Join(cacheDir, "kern", "kernels", runtime, kernelPlatformOS)
 }
 
 func downloadPrebuiltKernel(runtime, imageDigest, outputPath string) (bool, error) {
