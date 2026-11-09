@@ -352,7 +352,6 @@ func buildRootfs(projectPath, runtime string) (string, error) {
 	// buildah build
 	buildCmd := exec.Command("buildah", "build",
 		"--layers",
-		"--pull=missing",
 		"-t", imageName,
 		"-f", filepath.Join(projectPath, "Dockerfile"),
 		projectPath,
