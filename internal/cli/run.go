@@ -124,19 +124,34 @@ func runDirect(config *kernfile.KernfileConfig, kernelPath, initrdPath, projectP
 			return fmt.Errorf("could not create serial log directory: %w", err)
 		}
 		cfg.SerialLogPath = filepath.Join(logDir, config.App.Name+".log")
+		qemuLogPath := filepath.Join(logDir, config.App.Name+".qemu.log")
+		qemuLog, err := os.OpenFile(qemuLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("could not open QEMU log: %w", err)
+		}
 		args := runner.BuildQEMUArgs(cfg)
 		qemuCmd := exec.Command("qemu-system-x86_64", args...)
 		qemuCmd.Dir = projectPath
+		qemuCmd.Stdout = qemuLog
+		qemuCmd.Stderr = qemuLog
 		if err := qemuCmd.Start(); err != nil {
-			sleepTime := 2 * time.Second
-			if config.App.Runtime == "python" {
-				sleepTime = 8 * time.Second
-			}
-			time.Sleep(sleepTime)
+			qemuLog.Close()
 			return fmt.Errorf("error starting in background: %w", err)
 		}
 
-		time.Sleep(2 * time.Second)
+		waitDone := make(chan error, 1)
+		go func() {
+			waitDone <- qemuCmd.Wait()
+			qemuLog.Close()
+		}()
+		select {
+		case err := <-waitDone:
+			if err != nil {
+				return fmt.Errorf("QEMU exited during startup (details in %s): %w", qemuLogPath, err)
+			}
+			return fmt.Errorf("QEMU exited during startup (details in %s)", qemuLogPath)
+		case <-time.After(2 * time.Second):
+		}
 
 		instance := &instances.Instance{
 			ID:        generateID(),

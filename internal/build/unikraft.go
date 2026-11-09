@@ -30,6 +30,7 @@ var runtimeOSMap = map[string]string{
 }
 
 const kernelImageAnnotation = "org.unikraft.kernel.image"
+const kernelPlatformOS = "qemu"
 const kernelReleaseURL = "https://github.com/druxuss/Kern/releases/download/kern-nightly"
 
 func DownloadKernel(runtime, destDir string) (string, error) {
@@ -45,7 +46,7 @@ func downloadKernel(runtime, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid Unikraft image %q: %w", image, err)
 	}
-	remoteImage, err := remote.Image(ref, remote.WithPlatform(v1.Platform{OS: "fc", Architecture: "x86_64"}))
+	remoteImage, err := remote.Image(ref, remote.WithPlatform(v1.Platform{OS: kernelPlatformOS, Architecture: "x86_64"}))
 	if err != nil {
 		return "", fmt.Errorf("reading Unikraft image manifest for %s: %w", runtime, err)
 	}
