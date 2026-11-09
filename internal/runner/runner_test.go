@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -94,5 +95,31 @@ func TestBuildQEMUArgsPuertos(t *testing.T) {
 	}
 	if !tieneNetdev {
 		t.Error("debería incluir -netdev cuando hay puertos")
+	}
+}
+
+func TestBuildQEMUArgsEscapesAndOrdersEnvironment(t *testing.T) {
+	args := BuildQEMUArgs(RunConfig{
+		KernelPath: "kernel",
+		InitrdPath: "initrd",
+		MemoryMiB:  128,
+		CPUs:       1,
+		AppCmd:     "/app",
+		Env: map[string]string{
+			"Z_VALUE": "last",
+			"A_VALUE": `quote"and\slash`,
+		},
+	})
+	var appendValue string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-append" {
+			appendValue = args[i+1]
+			break
+		}
+	}
+	aIndex := strings.Index(appendValue, `"A_VALUE=quote\"and\\slash"`)
+	zIndex := strings.Index(appendValue, `"Z_VALUE=last"`)
+	if aIndex == -1 || zIndex == -1 || aIndex > zIndex {
+		t.Fatalf("environment variables are missing, unescaped, or nondeterministic: %s", appendValue)
 	}
 }

@@ -19,7 +19,7 @@ func TestGenerateDockerfileRefreshesLegacyNodeTemplate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "Dockerfile"), []byte(legacyNodeDockerfile("index.js")), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateDockerfile("node", "index.js", project); err != nil {
+	if err := generateDockerfile("node", "index.js", "sample", project); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +51,7 @@ func TestGenerateDockerfilePreservesCustomNodeDockerfile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "Dockerfile"), want, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateDockerfile("node", "index.js", project); err != nil {
+	if err := generateDockerfile("node", "index.js", "sample", project); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(project, "Dockerfile"))
@@ -60,6 +60,20 @@ func TestGenerateDockerfilePreservesCustomNodeDockerfile(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("custom Dockerfile changed: got %q, want %q", got, want)
+	}
+}
+
+func TestGenerateRustDockerfileCopiesConfiguredBinary(t *testing.T) {
+	project := t.TempDir()
+	if err := generateDockerfile("rust", "main.rs", "rust-api", project); err != nil {
+		t.Fatal(err)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(project, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dockerfile), "/release/rust-api /usr/src/app") {
+		t.Fatalf("Rust recipe does not copy the configured binary: %s", dockerfile)
 	}
 }
 

@@ -23,6 +23,10 @@ var debugCmd = &cobra.Command{
 		}
 
 		fmt.Printf("=== Debug: %s (PID %d) ===\n\n", name, instance.PID)
+		if instance.LogPath != "" {
+			fmt.Printf("Serial log: %s\n", instance.LogPath)
+			fmt.Printf("QEMU log:   %s\n\n", filepath.Join(filepath.Dir(instance.LogPath), name+".qemu.log"))
+		}
 
 		// Estado via QMP (QEMU Monitor Protocol)
 		socketPath, err := qmp.FindSocket(instance.PID)

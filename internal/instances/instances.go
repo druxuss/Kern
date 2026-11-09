@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -75,12 +77,20 @@ func List() ([]*Instance, error) {
 			continue
 		}
 
-		if !isRunning(instance.PID) {
+		if isRunning(instance.PID) {
+			instance.Status = "running"
+		} else {
 			instance.Status = "stopped"
 		}
 
 		instances = append(instances, &instance)
 	}
+	sort.Slice(instances, func(i, j int) bool {
+		if instances[i].Status != instances[j].Status {
+			return instances[i].Status == "running"
+		}
+		return instances[i].CreatedAt.After(instances[j].CreatedAt)
+	})
 
 	return instances, nil
 }
@@ -154,6 +164,10 @@ func isRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
-	return err == nil
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	command := strings.ReplaceAll(string(cmdline), "\x00", " ")
+	return strings.Contains(command, "qemu-system-") || strings.Contains(command, "qemu-kvm")
 }

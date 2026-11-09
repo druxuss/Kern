@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -114,9 +116,14 @@ func RunUnikernel(cfg RunConfig) error {
 
 func BuildQEMUArgs(cfg RunConfig) []string {
 	// Construir env.vars — el PATH siempre primero
-	envList := []string{`"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`}
-	for k, v := range cfg.Env {
-		envList = append(envList, fmt.Sprintf(`"%s=%s"`, k, v))
+	envList := []string{strconv.Quote("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")}
+	envNames := make([]string, 0, len(cfg.Env))
+	for name := range cfg.Env {
+		envNames = append(envNames, name)
+	}
+	sort.Strings(envNames)
+	for _, name := range envNames {
+		envList = append(envList, strconv.Quote(name+"="+cfg.Env[name]))
 	}
 	envVars := strings.Join(envList, ", ")
 	appendStr := fmt.Sprintf(`vfs.fstab=[ "initrd0:/:extract:::" ] env.vars=[ %s ] -- %s`, envVars, cfg.AppCmd)

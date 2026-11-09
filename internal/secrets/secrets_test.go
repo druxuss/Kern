@@ -1,7 +1,10 @@
 package secrets
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +98,71 @@ func TestResolveSecretsNonExistent(t *testing.T) {
 	_, err := ResolveSecrets(envMap)
 	if err == nil {
 		t.Error("should return error for nonexistent secret")
+	}
+}
+
+func TestSecretIsEncryptedWithProtectedMasterKey(t *testing.T) {
+	setTestHome(t)
+	if err := SetSecret("api-token", "super-secret-value"); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := secretsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(dir, "api-token.enc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "super-secret-value") || !strings.HasPrefix(string(stored), "v1:") {
+		t.Fatal("secret is not stored in the versioned encrypted format")
+	}
+	key, err := os.ReadFile(filepath.Join(dir, "master.key"))
+	if err != nil || len(key) != 32 {
+		t.Fatalf("invalid master key: length=%d err=%v", len(key), err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, "master.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Fatalf("master key permissions = %o, want 600", info.Mode().Perm())
+		}
+	}
+}
+
+func TestLegacySecretMigratesOnRead(t *testing.T) {
+	setTestHome(t)
+	dir, err := secretsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := encrypt(legacyKey("old-secret"), "legacy-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "old-secret.enc"), []byte(strings.TrimPrefix(legacy, "v1:")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetSecret("old-secret")
+	if err != nil || got != "legacy-value" {
+		t.Fatalf("GetSecret() = %q, %v", got, err)
+	}
+	updated, err := os.ReadFile(filepath.Join(dir, "old-secret.enc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(updated), "v1:") {
+		t.Fatal("legacy secret was not migrated")
+	}
+}
+
+func TestSecretNamesCannotEscapeStore(t *testing.T) {
+	setTestHome(t)
+	for _, name := range []string{"../outside", "nested/name", "", "."} {
+		if err := SetSecret(name, "value"); err == nil {
+			t.Errorf("SetSecret(%q) should reject the name", name)
+		}
 	}
 }

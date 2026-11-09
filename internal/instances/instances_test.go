@@ -108,9 +108,9 @@ func TestRemove(t *testing.T) {
 }
 
 func TestIsRunning(t *testing.T) {
-	// The implementation checks /proc, which is available on Linux only.
-	if runtime.GOOS == "linux" && !isRunning(1) {
-		t.Error("PID 1 should always be running on Linux")
+	// A live non-QEMU process must not be mistaken for a Kern instance.
+	if runtime.GOOS == "linux" && isRunning(1) {
+		t.Error("PID 1 must not be treated as a Kern QEMU instance")
 	}
 
 	// PID negativo nunca existe

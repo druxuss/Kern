@@ -9,20 +9,9 @@ import (
 	"strings"
 
 	"github.com/druxuss/Kern/internal/kernfile"
+	"github.com/druxuss/Kern/internal/packager"
 	"github.com/spf13/cobra"
 )
-
-type SBOM struct {
-	SPDXVersion string      `json:"spdxVersion"`
-	Name        string      `json:"name"`
-	Created     string      `json:"created"`
-	Components  []Component `json:"components"`
-}
-
-type Component struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
 
 var inspectCmd = &cobra.Command{
 	Use:   "inspect",
@@ -52,7 +41,7 @@ var inspectCmd = &cobra.Command{
 		fmt.Println("=== Image Size ===")
 		ukiPath := filepath.Join(unikernelDir, "image.uki")
 		if info, err := os.Stat(ukiPath); err == nil {
-			fmt.Printf("UKI:          %s\n", formatSize(info.Size()))
+			fmt.Printf("Image artifact: %s\n", formatSize(info.Size()))
 		} else {
 			fmt.Println("UKI:          not built yet")
 		}
@@ -68,23 +57,13 @@ var inspectCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		fmt.Println("=== Runtime ===")
-		memoryMap := map[string]string{
-			"node":   "512Mi",
-			"python": "384Mi",
-			"go":     "128Mi",
-			"rust":   "128Mi",
-			"bun":    "256Mi",
+		fmt.Println("=== Runtime Resources ===")
+		if profile, err := kernfile.LoadProfile(config.App.Runtime); err == nil {
+			if memory, cpus, err := kernfile.ResolveResources(config, profile); err == nil {
+				fmt.Printf("Memory:       %d MiB\n", memory)
+				fmt.Printf("vCPUs:        %d\n", cpus)
+			}
 		}
-		bootMap := map[string]string{
-			"node":   "~10ms",
-			"python": "~11ms",
-			"go":     "~8ms",
-			"rust":   "~8ms",
-			"bun":    "~10ms",
-		}
-		fmt.Printf("Min memory:   %s\n", memoryMap[config.App.Runtime])
-		fmt.Printf("Boot time:    %s\n", bootMap[config.App.Runtime])
 		fmt.Println()
 
 		fmt.Println("=== Network ===")
@@ -97,28 +76,14 @@ var inspectCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		// Secciones del .uki con readelf
+		// The signed artifact is an ELF with embedded initrd/cmdline sections.
 		if _, err := os.Stat(ukiPath); err == nil {
-			fmt.Println("=== UKI Sections ===")
+			fmt.Println("=== Embedded ELF Sections ===")
 			sections, err := getUKISections(ukiPath)
 			if err == nil {
 				for _, s := range sections {
 					fmt.Printf("  %s\n", s)
 				}
-			}
-			fmt.Println()
-		}
-
-		// Librerías del initramfs
-		if _, err := os.Stat(initrdPath); err == nil {
-			fmt.Println("=== Dependencies ===")
-			libs, err := getInitramfsLibs(initrdPath)
-			if err == nil && len(libs) > 0 {
-				for _, lib := range libs {
-					fmt.Printf("  %s\n", lib)
-				}
-			} else {
-				fmt.Println("  No libraries found")
 			}
 			fmt.Println()
 		}
@@ -133,13 +98,13 @@ var inspectCmd = &cobra.Command{
 
 		sbomPath := filepath.Join(unikernelDir, "image.sbom")
 		if data, err := os.ReadFile(sbomPath); err == nil {
-			var sbom SBOM
+			var sbom packager.SBOM
 			if err := json.Unmarshal(data, &sbom); err == nil {
 				fmt.Printf("SBOM:         ✓ %s\n", sbom.SPDXVersion)
 				fmt.Println()
-				fmt.Println("=== Components ===")
-				for _, c := range sbom.Components {
-					fmt.Printf("  %-20s %s\n", c.Name, c.Version)
+				fmt.Println("=== SBOM Packages ===")
+				for _, pkg := range sbom.Packages {
+					fmt.Printf("  %-24s %s\n", pkg.Name, pkg.VersionInfo)
 				}
 			}
 		} else {
@@ -203,30 +168,6 @@ func getUKISections(ukiPath string) ([]string, error) {
 		sections = append(sections, fmt.Sprintf("  %-30s %s", name, formatSize(size)))
 	}
 	return sections, nil
-}
-
-func getInitramfsLibs(initrdPath string) ([]string, error) {
-	cmd := exec.Command("sh", "-c",
-		fmt.Sprintf("cpio -t < %s 2>/dev/null | grep -E '^usr/src/node_modules/[^/]+$' | sed 's|usr/src/node_modules/||' | sort", initrdPath))
-	out, err := cmd.Output()
-	if err != nil {
-		// Para Go y Rust mostrar los binarios
-		cmd = exec.Command("sh", "-c",
-			fmt.Sprintf("cpio -t < %s 2>/dev/null | grep -v '/$' | grep -v node_modules | sort", initrdPath))
-		out, err = cmd.Output()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var files []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-	return files, nil
 }
 
 func formatSize(bytes int64) string {

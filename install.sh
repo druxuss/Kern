@@ -29,7 +29,7 @@ fi
 
 sudo -v
 printf 'Installing runtime packages...\n'
-common_packages=(ca-certificates curl binutils cpio tar findutils skopeo buildah fuse-overlayfs crun slirp4netns)
+common_packages=(ca-certificates curl binutils cpio tar findutils buildah fuse-overlayfs crun slirp4netns)
 distro_like=" ${ID_LIKE:-} "
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get -qq update
@@ -136,7 +136,7 @@ sudo install -d -m 0755 "$INSTALL_DIR/profiles"
 sudo install -m 0644 "${tmp_dir}/bundle"/profiles/*.toml "$INSTALL_DIR/profiles/"
 
 printf 'Checking runtime tools...\n'
-for tool in qemu-system-x86_64 skopeo buildah cpio objcopy xz; do
+for tool in qemu-system-x86_64 buildah cpio objcopy xz; do
     command -v "$tool" >/dev/null 2>&1 || fail "required command not found after install: $tool"
 done
 smoke_dir="$(mktemp -d)"

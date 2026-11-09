@@ -4,27 +4,20 @@
 
 A CLI tool to build, run and distribute applications as unikernels using Unikraft.
 
-kern eliminates the operating system from the application lifecycle. Instead of packaging your app inside a container with a full Linux OS, kern compiles it into a unikernel — a single binary that contains exactly what your app needs and nothing else.
+kern aims to package supported applications as single-purpose unikernels using Unikraft instead of a general-purpose container operating system. Runtime compatibility and the resulting image contents depend on the selected runtime and application.
 
-## Why kern?
-
-| | Docker | kern |
-|---|---|---|
-| Boot time | 800ms - 2s | 5 - 12ms |
-| Image size | 150MB - 800MB | 20 - 110MB |
-| Memory usage | 50 - 150MB | 8 - 40MB |
-| Attack surface | ~400 syscalls | ~50 syscalls |
+Kern currently targets x86_64 Linux guests on QEMU. It is an early-stage project; performance and security depend on the application, runtime profile, host, and configuration. The repository does not yet contain reproducible comparative benchmarks, so no Docker performance figures are claimed here.
 
 ## Requirements
 
-- x86_64 Linux: Ubuntu/Debian, Fedora/RHEL-compatible, Arch Linux, or openSUSE (using apt, dnf/yum, pacman, or zypper)
+- x86_64 Linux (the installer has package-manager paths for Ubuntu/Debian, Fedora/RHEL-compatible, Arch Linux, and openSUSE; only Ubuntu 22.04 has been exercised end to end in this workflow)
 - Windows with WSL2 and an Ubuntu distribution
 - A user account with `sudo` access and an internet connection
 - KVM is optional; QEMU uses software emulation when hardware acceleration is unavailable
 
 ## Installation
 
-Run this same command from a Bash terminal on Linux or from the Ubuntu terminal in WSL2:
+Run this same command from a Bash terminal on Linux or from an Ubuntu terminal in WSL2:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/druxuss/Kern/main/install.sh | bash
@@ -36,18 +29,18 @@ On Windows, if Ubuntu is not installed in WSL2 yet, run this once from an Admini
 wsl --install -d Ubuntu
 ```
 
-Restart if Windows asks, finish creating the Linux user, open Ubuntu, and run the same Bash command above. Kern and its Linux dependencies are installed inside WSL. The installer fetches a prebuilt Kern binary and configures QEMU, Buildah, Skopeo, and the other host tools; Go, Docker, and application language toolchains are not required on the host.
+Restart if Windows asks, finish creating the Linux user, open Ubuntu, and run the same Bash command above. Kern and its Linux dependencies are installed inside WSL. The installer fetches a prebuilt Kern binary and configures QEMU, Buildah, and required host tools; Go, Docker, and application language toolchains are not required on the host. The installer needs sudo and internet access.
 
 ### Initialize a project
 
-In an existing application directory containing a supported runtime manifest (`package.json`, `go.mod`, `Cargo.toml`, or `requirements.txt`), initialize the Kernfile and confirm the prompt:
+In an existing application directory containing a supported runtime manifest (`package.json`, `go.mod`, `Cargo.toml`, `requirements.txt`, or `bun.lockb`), initialize the Kernfile:
 
 ```bash
 cd path/to/my-app
 kern init
 ```
 
-Detects the runtime automatically (Node.js, Go, Rust, Python) and creates a `Kernfile`.
+Detects the runtime automatically (Node.js, Go, Rust, Python, or Bun), asks you to confirm, and creates a `Kernfile`. For Rust, it reads the first Cargo binary target (or the package name when no `[[bin]]` target is declared) for the generated app name. Review the entry point, ports, and resource settings before building.
 
 ### Build the unikernel
 
@@ -55,7 +48,7 @@ Detects the runtime automatically (Node.js, Go, Rust, Python) and creates a `Ker
 kern build
 ```
 
-Downloads the Unikraft kernel via skopeo, builds the rootfs with buildah, generates the initramfs, packages it as a `.uki` image, signs it with ed25519 and generates a SBOM. No Docker daemon or kraft required.
+Downloads and caches the runtime's QEMU kernel, builds the application root filesystem with Buildah, creates a CPIO initramfs, then writes a signed ELF artifact at `.unikernel/image.uki` with embedded metadata sections and an SPDX 2.3 SBOM. The `.uki` extension is Kern's artifact name; it is not a standard UEFI Unified Kernel Image. `kern run` boots the QEMU kernel and initramfs separately. No Docker daemon or Kraft CLI is used by the normal build path.
 
 ### Run locally
 
@@ -72,7 +65,7 @@ kern run -d --env NODE_ENV=dev # set environment variable
 kern inspect
 ```
 
-Shows image size, UKI sections, dependencies, runtime info and security status.
+Shows artifact/kernel/initramfs sizes, embedded ELF sections, runtime resources, signature status, and the SBOM package list. It does not currently enumerate every application dependency.
 
 ### Benchmark
 
@@ -100,7 +93,7 @@ kern metrics my-app       # show current metrics
 kern metrics my-app -w    # watch metrics in real-time
 ```
 
-Shows status, memory (via QMP balloon device) and vCPUs — without needing shell access inside the unikernel.
+Shows QEMU status, configured RAM, and vCPU information via QMP. Configured RAM is not a measurement of guest memory actually in use.
 
 ### Verify image integrity
 
@@ -108,7 +101,7 @@ Shows status, memory (via QMP balloon device) and vCPUs — without needing shel
 kern verify
 ```
 
-Verifies the ed25519 signature of the built image.
+Verifies the local `.unikernel/image.uki` against the local public key in `~/.config/kern/keys/`. This does not establish trust in images received from another machine; registry push/pull does not currently transport or verify signing keys/signatures.
 
 ### Debug
 
@@ -116,7 +109,7 @@ Verifies the ed25519 signature of the built image.
 kern debug my-app
 ```
 
-Shows QMP status, VMM logs and full process info for debugging crashes.
+Shows QMP status, the QEMU process information available to the current user, and paths to the serial and QEMU log files. Guest serial output is available only if the guest writes to the configured serial console.
 
 ### Push and pull images
 
@@ -125,12 +118,16 @@ kern push ghcr.io/YOUR_USER/my-app:1.0.0 -u YOUR_USER -p YOUR_TOKEN
 kern pull ghcr.io/YOUR_USER/my-app:1.0.0 -u YOUR_USER -p YOUR_TOKEN
 ```
 
+The registry stores the raw Kern artifact (`image.uki`) as a single OCI layer; its detached signature is not included. `kern pull` extracts that artifact to `.unikernel/image.uki`; it does not download the matching QEMU kernel/initramfs, so the pulled artifact cannot currently be launched with `kern run` on a clean project. Registry credentials passed with `-p` may be visible in process listings and shell history; use a short-lived token and avoid shared hosts.
+
 ### Manage secrets
 
 ```bash
-kern secret set db_url "postgres://user:pass@host/db"
+kern secret set db_url --stdin
 kern secret get db_url
 ```
+
+Enter the value through standard input (for example, `printf '%s' "$DB_URL" | kern secret set db_url --stdin`) to avoid placing it directly in shell history. Secrets are encrypted locally with AES-256-GCM using a random key stored beside the ciphertext under `~/.config/kern/secrets/`. This protects files at rest from casual disclosure, not from root or another process running as the same user. Resolved environment values are passed to QEMU and can be visible to privileged host users.
 
 Reference secrets in the Kernfile:
 
@@ -139,37 +136,9 @@ Reference secrets in the Kernfile:
 DATABASE_URL = "secret:db_url"
 ```
 
-## Multi-service applications
+## Experimental multi-service command
 
-kern supports multi-service applications with automatic networking between services.
-
-```yaml
-# kern-compose.yml
-version: "1.0"
-
-services:
-  api:
-    build: ./api
-    ports:
-      - "3000:3000"
-
-  worker:
-    build: ./worker
-    ports:
-      - "4000:4000"
-    depends_on:
-      - api
-```
-
-```bash
-kern compose up -d       # start all services
-kern compose ps          # list services
-kern compose logs        # show logs
-kern compose restart api # restart a service
-kern compose down        # stop and remove all services
-```
-
-Services communicate with each other by name (`http://worker:4000`) via a virtual bridge network with automatic DHCP and DNS resolution.
+`kern compose` exists in the CLI, but its multi-service lifecycle, networking, logging, and cleanup have not been validated end to end. It is not a supported deployment workflow; use individual `kern build` and `kern run` commands for the validated single-service workflow.
 
 ## GitHub Action
 
@@ -185,6 +154,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -195,6 +167,8 @@ jobs:
           registry-user: ${{ github.actor }}
           registry-token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+For GitHub Container Registry pushes, grant the workflow `packages: write` permission. The action should be pinned to a reviewed commit or release tag for reproducible CI; `@main` follows ongoing changes.
 
 See [kern-action](https://github.com/druxuss/Kern/blob/main/kern-action/action.yml) for full documentation.
 
@@ -223,25 +197,27 @@ DATABASE_URL = "secret:db_url"
 
 ## Supported runtimes
 
-| Runtime | Min memory | Boot time | Status |
+| Runtime | Default memory | Build recipe |
 |---|---|---|---|
-| Go 1.22 | 128Mi | ~8ms | ✅ Stable |
-| Node.js 21 | 512Mi | ~10ms | ✅ Stable |
-| Rust (latest) | 128Mi | ~8ms | ✅ Stable |
-| Python 3.12 | 384Mi | ~11ms | ✅ Stable |
-| Bun 1.1 | 256Mi | ~10ms | 🚧 Coming soon |
+| Go | 128 MiB | Implemented; verify app-specific builds |
+| Node.js 21 | 512 MiB | Implemented; Node.js 21 is end of life |
+| Rust | 64 MiB | Implemented; `kern init` uses the first Cargo binary target |
+| Python 3.12 | 384 MiB | Implemented; verify native dependencies in your app |
+| Bun | 512 MiB | Experimental; not covered by end-to-end validation |
+
+These are configuration defaults, not measured minimums or boot-time guarantees. Node.js 21 is end of life and is listed because the currently published Unikraft kernel profile targets it; do not treat it as a maintained production runtime.
 
 ## Security
 
 Every `kern build` automatically:
-- Downloads the Unikraft kernel from the official OCI registry
+- Uses a cached QEMU kernel, or downloads it from the official Unikraft OCI registry when needed
 - Builds the rootfs with buildah (no Docker daemon)
-- Packages the unikernel as a `.uki` (Unified Kernel Image)
+- Packages the unikernel as a Kern ELF artifact (`.unikernel/image.uki`; not a UEFI Unified Kernel Image)
 - Signs the image with ed25519 — stored in `.unikernel/image.uki.sig`
-- Generates a SBOM (SPDX-2.3) — stored in `.unikernel/image.sbom`
+- Generates a minimal SPDX-2.3 SBOM with the application and runtime/kernel components — stored in `.unikernel/image.sbom`; this is not a full file-level inventory
 - Keys are stored in `~/.config/kern/keys/`
 
-Verify any image before running:
+Verify a locally built artifact:
 
 ```bash
 kern verify
@@ -251,19 +227,19 @@ kern verify
 
 kern provides real-time observability without shell access inside the unikernel:
 
-- `kern metrics` — memory (via QMP balloon), vCPUs and status
-- `kern logs` — VM serial logs in real-time
-- `kern debug` — full process info, VMM logs and QMP status
-- `kern bench` — response time, throughput and latency
+- `kern metrics` — QEMU status, configured RAM, and vCPU information
+- `kern logs` — captured QEMU serial output (guest output depends on serial-console support)
+- `kern debug` — QMP status, process details, and log file locations
+- `kern bench` — HTTP response time, throughput, and average latency against a running app; it does not measure boot time or compare against Docker
 
 ## Build pipeline
 
 ```
 kern build
-  → skopeo       — downloads Unikraft kernel from unikraft.org OCI registry
+  → Go OCI client — downloads Unikraft kernel from unikraft.org OCI registry when no cached release artifact is available
   → buildah      — builds app rootfs from Dockerfile (no Docker daemon)
   → cpio         — generates initramfs
-  → objcopy      — combines kernel + initramfs + cmdline into .uki binary
+  → objcopy      — adds initramfs + cmdline sections to a Kern ELF artifact
   → ed25519      — signs the image
   → SPDX-2.3     — generates SBOM
 ```
@@ -293,24 +269,24 @@ kern/
 ## Status
 
 - [x] kern init
-- [x] kern build (kraft-free: skopeo + buildah + cpio)
+- [x] kern build (QEMU kernel + Buildah + cpio; no Docker daemon or Kraft CLI)
 - [x] kern run / kern run -d
 - [x] kern run --port / --env
 - [x] kern ps / stop / rm
 - [x] kern logs / kern logs -f
-- [x] kern metrics (memory via QMP, vCPUs, status)
+- [x] kern metrics (configured RAM, vCPUs, QMP status)
 - [x] kern debug
-- [x] kern inspect (UKI sections, dependencies, security)
+- [x] kern inspect (ELF sections, SBOM package list, signature status)
 - [x] kern verify (ed25519 signature)
 - [x] kern bench (response time, throughput, latency)
-- [x] kern push / pull (ghcr.io)
-- [x] kern secret set / get (AES-256-GCM)
-- [x] kern compose (multi-service with bridge networking)
+- [x] kern push / pull (OCI artifact exchange; pulled artifact is not directly runnable)
+- [x] kern secret set / get (local AES-256-GCM store)
+- [ ] kern compose (experimental; not end-to-end validated)
 - [x] GitHub Action (druxuss/Kern/kern-action@main)
-- [x] Node.js 21 runtime
-- [x] Go 1.22 runtime
-- [x] Rust runtime
-- [x] Python 3.12 runtime
-- [ ] Bun 1.1 runtime
+- [x] Node.js 21 build recipe (runtime is end of life)
+- [x] Go build recipe
+- [x] Rust build recipe
+- [x] Python 3.12 build recipe
+- [ ] Bun build recipe (experimental)
 - [ ] macOS support (HVF)
 - [ ] Java 17 runtime

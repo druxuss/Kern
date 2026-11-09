@@ -3,6 +3,8 @@ package packager
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,10 +21,14 @@ type ImageMetadata struct {
 }
 
 type SBOM struct {
-	SPDXVersion string      `json:"spdxVersion"`
-	Name        string      `json:"name"`
-	Created     time.Time   `json:"created"`
-	Components  []Component `json:"components"`
+	SPDXVersion       string           `json:"spdxVersion"`
+	DataLicense       string           `json:"dataLicense"`
+	SPDXID            string           `json:"SPDXID"`
+	Name              string           `json:"name"`
+	DocumentNamespace string           `json:"documentNamespace"`
+	CreationInfo      SPDXCreationInfo `json:"creationInfo"`
+	DocumentDescribes []string         `json:"documentDescribes"`
+	Packages          []SPDXPackage    `json:"packages"`
 }
 
 type Component struct {
@@ -30,10 +36,29 @@ type Component struct {
 	Version string `json:"version"`
 }
 
+type SPDXCreationInfo struct {
+	Created  string   `json:"created"`
+	Creators []string `json:"creators"`
+}
+
+type SPDXPackage struct {
+	Name             string `json:"name"`
+	SPDXID           string `json:"SPDXID"`
+	VersionInfo      string `json:"versionInfo"`
+	DownloadLocation string `json:"downloadLocation"`
+	FilesAnalyzed    bool   `json:"filesAnalyzed"`
+	LicenseConcluded string `json:"licenseConcluded"`
+	LicenseDeclared  string `json:"licenseDeclared"`
+	CopyrightText    string `json:"copyrightText"`
+}
+
 func GenerateKeyPair(configDir string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
 	keyDir := filepath.Join(configDir, "keys")
 	if err := os.MkdirAll(keyDir, 0700); err != nil {
 		return nil, nil, fmt.Errorf("error creating key directory: %w", err)
+	}
+	if err := os.Chmod(keyDir, 0700); err != nil {
+		return nil, nil, fmt.Errorf("error protecting key directory: %w", err)
 	}
 
 	pubKeyPath := filepath.Join(keyDir, "kern.pub")
@@ -47,6 +72,12 @@ func GenerateKeyPair(configDir string) (ed25519.PublicKey, ed25519.PrivateKey, e
 		pubBytes, err := os.ReadFile(pubKeyPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error reading public key: %w", err)
+		}
+		if len(privBytes) != ed25519.PrivateKeySize || len(pubBytes) != ed25519.PublicKeySize {
+			return nil, nil, fmt.Errorf("stored signing key has an invalid length")
+		}
+		if err := os.Chmod(privKeyPath, 0600); err != nil {
+			return nil, nil, fmt.Errorf("error protecting private key: %w", err)
 		}
 		return ed25519.PublicKey(pubBytes), ed25519.PrivateKey(privBytes), nil
 	}
@@ -102,11 +133,48 @@ func VerifySignature(imagePath string, pubKey ed25519.PublicKey) error {
 }
 
 func GenerateSBOM(name, version, runtime string, components []Component) *SBOM {
+	created := time.Now().UTC()
+	namespaceID := make([]byte, 16)
+	if _, err := rand.Read(namespaceID); err != nil {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s", name, version, runtime, created.Format(time.RFC3339Nano))))
+		copy(namespaceID, sum[:16])
+	}
+	namespaceID[6] = (namespaceID[6] & 0x0f) | 0x40
+	namespaceID[8] = (namespaceID[8] & 0x3f) | 0x80
+	format := hex.EncodeToString(namespaceID)
+	documentNamespace := fmt.Sprintf("https://kern.invalid/spdx/%s-%s-%s", format[:8], format[8:12], format[12:])
+	packages := []SPDXPackage{newSPDXPackage(name, "SPDXRef-Application", version)}
+	for i, component := range components {
+		packages = append(packages, newSPDXPackage(component.Name, fmt.Sprintf("SPDXRef-Component-%d", i+1), component.Version))
+	}
 	return &SBOM{
-		SPDXVersion: "SPDX-2.3",
-		Name:        name,
-		Created:     time.Now(),
-		Components:  components,
+		SPDXVersion:       "SPDX-2.3",
+		DataLicense:       "CC0-1.0",
+		SPDXID:            "SPDXRef-DOCUMENT",
+		Name:              name,
+		DocumentNamespace: documentNamespace,
+		CreationInfo: SPDXCreationInfo{
+			Created:  created.Format("2006-01-02T15:04:05Z"),
+			Creators: []string{"Tool: Kern"},
+		},
+		DocumentDescribes: []string{"SPDXRef-Application"},
+		Packages:          packages,
+	}
+}
+
+func newSPDXPackage(name, spdxID, version string) SPDXPackage {
+	if version == "" {
+		version = "NOASSERTION"
+	}
+	return SPDXPackage{
+		Name:             name,
+		SPDXID:           spdxID,
+		VersionInfo:      version,
+		DownloadLocation: "NOASSERTION",
+		FilesAnalyzed:    false,
+		LicenseConcluded: "NOASSERTION",
+		LicenseDeclared:  "NOASSERTION",
+		CopyrightText:    "NOASSERTION",
 	}
 }
 

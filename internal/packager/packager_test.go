@@ -99,8 +99,16 @@ func TestGenerateSBOM(t *testing.T) {
 	if sbom.Name != "my-app" {
 		t.Errorf("expected my-app, got %s", sbom.Name)
 	}
-	if len(sbom.Components) != 2 {
-		t.Errorf("expected 2 components, got %d", len(sbom.Components))
+	if len(sbom.Packages) != 3 {
+		t.Errorf("expected application and 2 packages, got %d", len(sbom.Packages))
+	}
+	if sbom.SPDXID != "SPDXRef-DOCUMENT" || sbom.DataLicense != "CC0-1.0" || sbom.DocumentNamespace == "" {
+		t.Fatal("SPDX document is missing required metadata")
+	}
+	for _, pkg := range sbom.Packages {
+		if pkg.SPDXID == "" || pkg.DownloadLocation == "" || pkg.LicenseConcluded == "" || pkg.LicenseDeclared == "" || pkg.CopyrightText == "" {
+			t.Errorf("SPDX package %q is missing required fields", pkg.Name)
+		}
 	}
 }
 
