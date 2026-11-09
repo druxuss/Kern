@@ -351,6 +351,8 @@ func buildRootfs(projectPath, runtime string) (string, error) {
 
 	// buildah build
 	buildCmd := exec.Command("buildah", "build",
+		"--layers",
+		"--pull=missing",
 		"-t", imageName,
 		"-f", filepath.Join(projectPath, "Dockerfile"),
 		projectPath,
@@ -358,9 +360,7 @@ func buildRootfs(projectPath, runtime string) (string, error) {
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
-		// Fallback a Docker si buildah no está disponible
-		fmt.Println("warning: buildah failed, falling back to Docker...")
-		return buildRootfsDocker(projectPath, runtime)
+		return "", fmt.Errorf("Buildah failed to build the rootfs (Kern does not require Docker): %w", err)
 	}
 
 	// Exportar imagen a tar OCI
@@ -385,58 +385,6 @@ func buildRootfs(projectPath, runtime string) (string, error) {
 	os.Remove(tarPath)
 	exec.Command("buildah", "rmi", "localhost/"+imageName).Run()
 
-	return rootfsDir, nil
-}
-
-func buildRootfsDocker(projectPath, runtime string) (string, error) {
-	fmt.Println("→ Building rootfs with Docker...")
-
-	imageName := "kern-rootfs-" + runtime
-
-	buildCmd := exec.Command("docker", "build",
-		"-t", imageName,
-		"-f", filepath.Join(projectPath, "Dockerfile"),
-		projectPath,
-	)
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-	if err := buildCmd.Run(); err != nil {
-		return "", fmt.Errorf("error building rootfs: %w", err)
-	}
-
-	rootfsDir := filepath.Join(projectPath, ".unikraft", "rootfs")
-	if err := os.MkdirAll(rootfsDir, 0755); err != nil {
-		return "", err
-	}
-
-	createOut, err := exec.Command("docker", "create",
-		"--entrypoint", "", imageName, "sh").Output()
-	if err != nil {
-		createOut, err = exec.Command("docker", "create",
-			imageName, "/bin/true").Output()
-		if err != nil {
-			return "", fmt.Errorf("error creating container: %w", err)
-		}
-	}
-
-	containerID := strings.TrimSpace(string(createOut))
-
-	exportCmd := exec.Command("docker", "export", containerID)
-	tarCmd := exec.Command("tar", "-x", "-C", rootfsDir)
-	tarCmd.Stdin, _ = exportCmd.StdoutPipe()
-	tarCmd.Stderr = os.Stderr
-
-	if err := tarCmd.Start(); err != nil {
-		return "", err
-	}
-	if err := exportCmd.Run(); err != nil {
-		return "", err
-	}
-	if err := tarCmd.Wait(); err != nil {
-		return "", err
-	}
-
-	exec.Command("docker", "rm", containerID).Run()
 	return rootfsDir, nil
 }
 
